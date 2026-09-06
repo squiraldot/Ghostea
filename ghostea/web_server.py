@@ -347,19 +347,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 # The registry is the authoritative discovery source: a chat
                 # can exist there even if settings were not materialized by an
                 # older bot version. Settings are then overlaid when present.
+                # Read the registry with only columns that are guaranteed by
+                # the canonical schema.  In particular, do not order by a
+                # migration-added column: older installations can have a
+                # partially upgraded registry and PostgREST would otherwise
+                # fail the entire request.
                 try:
                     registry = self._call_sync(
                         self.store.db.select,
                         "ghostea_chat_registry",
-                        {
-                            "select": "chat_id,chat_type,title,username,visibility,is_forum,updated_at,last_seen_at",
-                            "order": "updated_at.desc",
-                            "limit": "200",
-                        },
+                        {"select": "*", "limit": "200"},
                     )
+                    if not isinstance(registry, list):
+                        registry = []
                 except Exception as exc:
                     logger.exception("Group registry query failed")
-                    return _json(self, 503, {"error": "group_registry_unavailable"})
+                    registry = []
 
                 try:
                     settings_rows = self._call_sync(
@@ -367,74 +370,125 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "ghostea_group_settings",
                         {"select": "*", "limit": "200"},
                     )
+                    if not isinstance(settings_rows, list):
+                        settings_rows = []
                 except Exception:
-                    # Preserve registry visibility even if an older database
-                    # lacks settings rows or the settings query is transiently
-                    # unavailable.
+                    # Registry data must remain useful even when settings are
+                    # temporarily unavailable.
                     logger.exception("Group settings query failed")
                     settings_rows = []
 
-                settings_by_chat = {
-                    str(r.get("chat_id")): r for r in settings_rows
-                }
-                merged = []
+                # If both sources are unavailable, surface a useful 503 rather
+                # than an opaque 500.  If either source has data, keep serving
+                # the data we do have.
+                if not registry and not settings_rows:
+                    return _json(self, 503, {
+                        "error": "groups_data_unavailable",
+                        "retryable": True,
+                    })
 
-                # Registry-first means administrator-only activity and legacy
-                # installations are still visible in the dashboard.
-                for info in registry:
-                    chat_key = str(info.get("chat_id"))
-                    item = dict(settings_by_chat.get(chat_key, {}))
-                    item["chat_id"] = info.get("chat_id")
-                    for key in ("chat_type", "title", "username", "visibility", "is_forum"):
-                        item[key] = info.get(key)
+                settings_by_chat = {
+                    str(r.get("chat_id")): r
+                    for r in settings_rows
+                    if isinstance(r, dict) and r.get("chat_id") is not None
+                }
+
+                def normalize_group(info, fallback=None):
+                    """Build a dashboard-safe group without allowing one bad
+                    legacy row to break the entire groups response."""
+                    source = dict(fallback or {})
+                    if isinstance(info, dict):
+                        source.update(info)
+
+                    raw_chat_id = source.get("chat_id")
+                    try:
+                        chat_id = int(raw_chat_id)
+                    except (TypeError, ValueError, OverflowError):
+                        return None
+
+                    chat_type = str(source.get("chat_type") or "supergroup")
+                    if chat_type not in ("group", "supergroup"):
+                        chat_type = "supergroup"
+
+                    title = str(source.get("title") or "")
+                    username = source.get("username")
+                    visibility_value = str(source.get("visibility") or "private")
+                    is_forum = bool(source.get("is_forum", False))
+
+                    item = dict(fallback or {})
+                    if isinstance(info, dict):
+                        # Settings can contain all configuration fields, while
+                        # registry identity fields are authoritative.
+                        item.update(fallback or {})
+                        item.update(info)
+
+                    item["chat_id"] = chat_id
+                    item["chat_type"] = chat_type
+                    item["title"] = title
+                    item["username"] = username
+                    item["is_forum"] = bool(is_forum and chat_type == "supergroup")
 
                     registry_row = {
-                        "chat_id": item.get("chat_id"),
-                        "chat_type": item.get("chat_type"),
-                        "title": item.get("title"),
-                        "username": item.get("username"),
-                        "visibility": item.get("visibility"),
-                        "is_forum": item.get("is_forum"),
+                        "chat_id": chat_id,
+                        "chat_type": chat_type,
+                        "title": title,
+                        "username": username,
+                        "visibility": visibility_value,
+                        "is_forum": item["is_forum"],
                     }
-                    caps = capabilities_from_registry(registry_row)
-                    visibility = visibility_from_registry(registry_row)
-                    item["visibility"] = visibility.visibility
-                    item["username"] = visibility.username
-                    item["public_url"] = visibility.public_url
-                    item["access_label"] = visibility.access_label
-                    item["visibility_info"] = visibility.as_dict()
-                    item["capabilities"] = caps.as_dict()
-                    item["forum_compatibility"] = resolve_forum_compatibility(caps).as_dict()
-                    merged.append(item)
 
-                # Backward compatibility: settings-only rows created by old
-                # versions must remain visible until the registry is populated.
-                registry_ids = {str(r.get("chat_id")) for r in registry}
+                    try:
+                        caps = capabilities_from_registry(registry_row)
+                        visibility = visibility_from_registry(registry_row)
+                        item["visibility"] = visibility.visibility
+                        item["username"] = visibility.username
+                        item["public_url"] = visibility.public_url
+                        item["access_label"] = visibility.access_label
+                        item["visibility_info"] = visibility.as_dict()
+                        item["capabilities"] = caps.as_dict()
+                        item["forum_compatibility"] = resolve_forum_compatibility(caps).as_dict()
+                    except Exception:
+                        # Identity/configuration should still render if a
+                        # legacy metadata value is malformed.
+                        logger.exception("Group metadata normalization failed: chat=%s", chat_id)
+                        item["visibility"] = "private"
+                        item["username"] = None
+                        item["public_url"] = None
+                        item["access_label"] = "Private / no public username"
+                        item["visibility_info"] = {
+                            "visibility": "private",
+                            "username": None,
+                            "public_url": None,
+                            "access_label": "Private / no public username",
+                            "is_public": False,
+                            "is_private": True,
+                            "can_show_public_link": False,
+                            "identity_label": "Private chat",
+                        }
+                        item["capabilities"] = {}
+                        item["forum_compatibility"] = {}
+
+                    return item
+
+                merged = []
+                registry_ids = set()
+
+                # Registry is the primary identity source.
+                for info in registry:
+                    item = normalize_group(info, settings_by_chat.get(str(info.get("chat_id"))))
+                    if item is not None:
+                        merged.append(item)
+                        registry_ids.add(str(item["chat_id"]))
+
+                # Settings-only rows remain visible for legacy installations.
                 for row in settings_rows:
+                    if not isinstance(row, dict):
+                        continue
                     if str(row.get("chat_id")) in registry_ids:
                         continue
-                    item = dict(row)
-                    item.setdefault("chat_type", "supergroup")
-                    item.setdefault("visibility", "private")
-                    item.setdefault("is_forum", False)
-                    registry_row = {
-                        "chat_id": item.get("chat_id"),
-                        "chat_type": item.get("chat_type"),
-                        "title": item.get("title"),
-                        "username": item.get("username"),
-                        "visibility": item.get("visibility"),
-                        "is_forum": item.get("is_forum"),
-                    }
-                    caps = capabilities_from_registry(registry_row)
-                    visibility = visibility_from_registry(registry_row)
-                    item["visibility"] = visibility.visibility
-                    item["username"] = visibility.username
-                    item["public_url"] = visibility.public_url
-                    item["access_label"] = visibility.access_label
-                    item["visibility_info"] = visibility.as_dict()
-                    item["capabilities"] = caps.as_dict()
-                    item["forum_compatibility"] = resolve_forum_compatibility(caps).as_dict()
-                    merged.append(item)
+                    item = normalize_group(row)
+                    if item is not None:
+                        merged.append(item)
 
                 return _json(self, 200, self._put_cache(cache_key, {"groups": merged}))
             if path.startswith("/api/groups/") and path.endswith("/topics"):

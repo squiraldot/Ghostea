@@ -52,9 +52,48 @@ begin
     end if;
 end $$;
 
--- Safe upgrade for databases created before Phase 11.
+-- Safe upgrade for databases created by older Ghostea builds.
+-- Keep the registry readable even when only chat_id existed previously.
+alter table ghostea_chat_registry
+    add column if not exists chat_type text;
+alter table ghostea_chat_registry
+    add column if not exists title text;
+alter table ghostea_chat_registry
+    add column if not exists username text;
 alter table ghostea_chat_registry
     add column if not exists visibility text not null default 'private';
+alter table ghostea_chat_registry
+    add column if not exists is_forum boolean not null default false;
+alter table ghostea_chat_registry
+    add column if not exists first_seen_at timestamptz not null default now();
+alter table ghostea_chat_registry
+    add column if not exists last_seen_at timestamptz not null default now();
+alter table ghostea_chat_registry
+    add column if not exists updated_at timestamptz not null default now();
+
+-- Backfill any legacy rows before applying the canonical NOT NULL/check
+-- constraints. A legacy registry row without a type is treated as a
+-- supergroup because that is the dashboard's safest historical default.
+update ghostea_chat_registry
+set chat_type = coalesce(nullif(chat_type, ''), 'supergroup')
+where chat_type is null or chat_type = '';
+
+alter table ghostea_chat_registry
+    alter column chat_type set not null;
+
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'ghostea_chat_registry_chat_type'
+          and conrelid = 'ghostea_chat_registry'::regclass
+    ) then
+        alter table ghostea_chat_registry
+            add constraint ghostea_chat_registry_chat_type
+            check (chat_type in ('group', 'supergroup'));
+    end if;
+end $$;
 
 do $$
 begin

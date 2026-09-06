@@ -368,3 +368,10 @@ that process or service.
 - `ghostea_chat_registry` and `ghostea_group_settings` are reconciled automatically; `database.sql` is the single Supabase schema/migration file.
 - Render should have exactly one polling process using the bot token. A brief 409 during a deploy/restart can recover automatically; persistent 409 means another instance is still polling.
 - Vercel dashboard is pinned to Node 22.x to avoid deprecation warnings from older transitive runtime code.
+
+
+## Dashboard groups fix
+The `/api/groups` endpoint is registry-first and tolerant of partially upgraded legacy rows. Run the single `database.sql` in Supabase once after deploying this version. It also backfills missing group settings for discovered chats.
+
+## Telegram polling
+Ghostea uses one long-polling instance on Render. A brief Telegram `409 Conflict` during a Render deploy/restart can occur while the previous instance releases `getUpdates`; it should be followed by `200 OK`. Do not run the same bot token locally or on another host at the same time.
