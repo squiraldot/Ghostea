@@ -375,3 +375,28 @@ The `/api/groups` endpoint is registry-first and tolerant of partially upgraded 
 
 ## Telegram polling
 Ghostea uses one long-polling instance on Render. A brief Telegram `409 Conflict` during a Render deploy/restart can occur while the previous instance releases `getUpdates`; it should be followed by `200 OK`. Do not run the same bot token locally or on another host at the same time.
+
+
+## Telegram/Vercel deployment contract (2026)
+
+- Render is the only Telegram long-polling process.
+- Vercel only serves the dashboard/proxy and never calls Telegram `getUpdates`.
+- Telegram `getUpdates` supports one polling connection for a bot token. A `409 Conflict`
+  means another polling connection currently owns the queue. A short 409 during a Render
+  rolling restart can recover; a continuous 409 means another worker/service is using the
+  same token.
+- Ghostea uses the documented `my_chat_member` update to register a bot when it is added
+  to a group. It also registers groups from the first message/update received for that
+  group, so privacy mode does not block registration when a command is sent.
+- Telegram does not provide a "list every group this bot belongs to" Bot API method.
+  Therefore an already-existing group that was never stored must generate one update
+  (for example `/chatinfo` or another command/message) after this deployment.
+- Vercel dashboard uses Node.js 24.x. This is configured in `dashboard/package.json`.
+
+### Existing group bootstrap
+
+Telegram's Bot API does not expose a method to enumerate every group where a bot is
+currently a member. If a group was added before Ghostea's registry was fixed, Telegram
+will not retroactively send its old `my_chat_member` event. Send `/chatinfo` once in that
+group after deployment; the application now persists the group before the command handler
+runs. No database reset is required.

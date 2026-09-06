@@ -351,25 +351,51 @@ def create_application():
     application.add_handler(CommandHandler("readiness", readiness_command))
 
 
-    # H02 — live permission/membership cache invalidation.
-    # NOTE: these are top-level Telegram Update fields, not Message status
-    # updates. PTB 22.x does not expose them through StatusUpdate filters.
-    # TypeHandler keeps lifecycle coverage without breaking startup.
+    # H02 — Telegram membership lifecycle.
+    # Use the documented PTB ChatMemberHandler for top-level my_chat_member
+    # updates. This is more precise than a generic TypeHandler and matches the
+    # official PTB example for tracking which chats the bot belongs to.
+    from telegram.ext import ChatMemberHandler
     from ghostea.handlers.permission_events import handle_my_chat_member, handle_chat_member
 
-    async def _handle_my_chat_member_update(update, context):
-        if getattr(update, "my_chat_member", None) is not None:
-            await handle_my_chat_member(update, context)
-
-    async def _handle_chat_member_update(update, context):
-        if getattr(update, "chat_member", None) is not None:
-            await handle_chat_member(update, context)
-
     application.add_handler(
-        TypeHandler(Update, _handle_my_chat_member_update)
+        ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER),
+        group=0,
     )
     application.add_handler(
-        TypeHandler(Update, _handle_chat_member_update)
+        ChatMemberHandler(handle_chat_member, ChatMemberHandler.CHAT_MEMBER),
+        group=0,
+    )
+
+    # Register every supported group/supergroup as soon as Telegram delivers
+    # ANY message/update carrying an effective chat. This is intentionally
+    # before the command/moderation handlers. Telegram does not expose an API
+    # to enumerate all groups a bot belongs to, so existing groups become
+    # discoverable again as soon as the bot receives their next command/message.
+    async def _ensure_chat_registered(update, context):
+        chat = getattr(update, "effective_chat", None)
+        if not chat or getattr(chat, "type", None) not in {"group", "supergroup"}:
+            return
+        store = context.application.bot_data.get("phase3_store")
+        if not store:
+            return
+        try:
+            private_topics_enabled = bool(
+                context.application.bot_data.get("private_topics_enabled", False)
+            )
+            from ghostea.services.chat_context import build_chat_context
+            message = getattr(update, "effective_message", None)
+            chat_context = build_chat_context(
+                chat, message, private_topics_enabled=private_topics_enabled
+            )
+            if chat_context and chat_context.is_supported:
+                await store.touch_chat(chat_context)
+        except Exception:
+            logger.exception("Early chat registration failed: chat=%s", getattr(chat, "id", None))
+
+    application.add_handler(
+        TypeHandler(Update, _ensure_chat_registered),
+        group=1,
     )
     # H04 — edited messages are a distinct Telegram update family. Register
     # before the generic message handler so edited text/captions are evaluated
@@ -408,4 +434,5 @@ def run():
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=False,
+        bootstrap_retries=5,
     )

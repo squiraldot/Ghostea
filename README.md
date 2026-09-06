@@ -942,3 +942,7 @@ are covered by a deterministic offline regression harness.
 The H15 harness never calls Telegram, Supabase, or external services and is
 included in local production-readiness checks. It does not introduce a new
 moderation policy or capability.
+
+
+### Deployment note
+Vercel dashboard is pinned to Node.js 24.x. Render is the only Telegram polling worker. Groups are persisted on `my_chat_member` and on the first subsequent group update.

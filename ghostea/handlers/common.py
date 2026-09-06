@@ -1,5 +1,8 @@
+import logging
 from telegram import Update
 from telegram.ext import ContextTypes
+
+logger = logging.getLogger("Ghostea")
 
 from ghostea.services.telegram_service import is_admin
 from ghostea.services.chat_context import build_chat_context
@@ -59,6 +62,13 @@ async def chatinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_context = build_chat_context(
         chat, message, private_topics_enabled=private_topics_enabled
     )
+    if chat_context and chat_context.is_supported:
+        try:
+            store = context.application.bot_data.get("phase3_store")
+            if store:
+                await store.touch_chat(chat_context)
+        except Exception:
+            logger.exception("Chat info registration failed: chat=%s", chat.id)
     if not chat_context:
         await message.reply_text("ℹ️ This chat type is not supported by Ghostea.")
         return

@@ -337,6 +337,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "production_ready": bool(readiness.get("ready", True)),
                 })
 
+            if path == "/api/groups/diagnostics":
+                if not self._require_read(): return
+                diagnostics = {"ok": True, "registry": {"ok": False, "count": 0}, "settings": {"ok": False, "count": 0}}
+                try:
+                    rows = self._call_sync(
+                        self.store.db.select,
+                        "ghostea_chat_registry",
+                        {"select": "chat_id,chat_type,title,username,visibility,is_forum,last_seen_at", "limit": "200"},
+                    )
+                    diagnostics["registry"] = {"ok": True, "count": len(rows) if isinstance(rows, list) else 0}
+                    diagnostics["registry"]["rows"] = rows if isinstance(rows, list) else []
+                except Exception as exc:
+                    logger.exception("Group registry diagnostics failed")
+                    diagnostics["registry"]["error"] = str(exc)[:300]
+                try:
+                    rows = self._call_sync(
+                        self.store.db.select,
+                        "ghostea_group_settings",
+                        {"select": "chat_id,updated_at", "limit": "200"},
+                    )
+                    diagnostics["settings"] = {"ok": True, "count": len(rows) if isinstance(rows, list) else 0}
+                    diagnostics["settings"]["rows"] = rows if isinstance(rows, list) else []
+                except Exception as exc:
+                    logger.exception("Group settings diagnostics failed")
+                    diagnostics["settings"]["error"] = str(exc)[:300]
+                return _json(self, 200, diagnostics)
+
             if path == "/api/groups":
                 if not self._require_read(): return
                 cache_key = f"groups:{self.headers.get('X-Ghostea-Admin-Id','')}"
@@ -378,14 +405,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     logger.exception("Group settings query failed")
                     settings_rows = []
 
-                # If both sources are unavailable, surface a useful 503 rather
-                # than an opaque 500.  If either source has data, keep serving
-                # the data we do have.
-                if not registry and not settings_rows:
-                    return _json(self, 503, {
-                        "error": "groups_data_unavailable",
-                        "retryable": True,
-                    })
+                # An empty result is a valid state (e.g. a brand-new install).
+                # Do not turn it into a 503: the dashboard should render an empty
+                # list while the bot waits for its first group update.
 
                 settings_by_chat = {
                     str(r.get("chat_id")): r
