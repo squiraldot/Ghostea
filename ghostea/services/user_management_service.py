@@ -10,7 +10,6 @@ from ghostea.services.telegram_service import (
     unban_member,
     unmute_member,
     is_admin,
-    perform_ban_member, perform_mute_member, perform_unban_member, perform_unmute_member,
 )
 
 
@@ -24,10 +23,9 @@ class UserManagementService:
     membership, warnings, mute, ban, or reputation scope.
     """
 
-    def __init__(self, store, bot, permission_service=None):
+    def __init__(self, store, bot):
         self.store = store
         self.bot = bot
-        self.permission_service = permission_service
 
     async def profile(self, chat_id, user_id):
         data = await self.store.get_user_profile(chat_id, user_id)
@@ -61,9 +59,7 @@ class UserManagementService:
         # transient API failure must never become permission to moderate an
         # unknown account that could be an administrator.
         try:
-            member = await self.permission_service.member(
-                await self.bot.get_chat(chat_id), target_user_id
-            ) if self.permission_service is not None else await self.bot.get_chat_member(chat_id, target_user_id)
+            member = await self.bot.get_chat_member(chat_id, target_user_id)
         except Exception:
             return False, "target_lookup_failed"
 
@@ -88,19 +84,12 @@ class UserManagementService:
             chat_id, target_user_id, admin_user_id, "WARN",
             f"reason={reason};count={count};action={action}",
         )
-        profile = await self.profile(chat_id, target_user_id)
-        profile["admin_action"] = {
-            "requested": "warn",
-            "warning_count": count,
-            "result": "success" if not str(action).endswith("_failed") else "punishment_failed",
-            "action": action,
-        }
-        return profile
+        return await self.profile(chat_id, target_user_id)
 
     async def _warning_for_member(self, chat_id, user, reason):
         # Keep the same warning policy as Telegram /warn.
         from ghostea.services.phase3_moderation import Phase3ModerationService
-        service = Phase3ModerationService(self.store, self.bot, self.permission_service)
+        service = Phase3ModerationService(self.store)
         # A lightweight chat adapter is unnecessary: the bot's Chat object
         # provides the same moderation methods required by the service.
         chat = await self.bot.get_chat(chat_id)
@@ -135,10 +124,10 @@ class UserManagementService:
         if not allowed:
             raise PermissionError(error)
         chat = await self.bot.get_chat(chat_id)
-        result = await perform_ban_member(chat, target_user_id, self.permission_service)
-        if not result.ok:
-            raise PermissionError(f"ban_failed:{result.status.value}")
-        await self.store.log(chat_id, target_user_id, "BAN", "Dashboard ban", "")
+        await ban_member(chat, target_user_id)
+        await self.store.log(
+            chat_id, target_user_id, "BAN", "Dashboard ban", ""
+        )
         await self.store.log_user_admin_action(
             chat_id, target_user_id, admin_user_id, "BAN"
         )
@@ -146,10 +135,10 @@ class UserManagementService:
 
     async def unban(self, chat_id, target_user_id, admin_user_id):
         chat = await self.bot.get_chat(chat_id)
-        result = await perform_unban_member(chat, target_user_id, self.permission_service)
-        if not result.ok:
-            raise PermissionError(f"unban_failed:{result.status.value}")
-        await self.store.log(chat_id, target_user_id, "UNBAN", "Dashboard unban", "")
+        await unban_member(chat, target_user_id)
+        await self.store.log(
+            chat_id, target_user_id, "UNBAN", "Dashboard unban", ""
+        )
         await self.store.log_user_admin_action(
             chat_id, target_user_id, admin_user_id, "UNBAN"
         )
@@ -164,11 +153,11 @@ class UserManagementService:
         allowed, error = await self._guard_target(chat_id, target_user_id)
         if not allowed:
             raise PermissionError(error)
-        result = await perform_mute_member(chat, target_user_id, minutes, self.permission_service)
-        if not result.ok:
-            raise PermissionError(f"mute_failed:{result.status.value}")
-        await self.store.log(chat_id, target_user_id, "MUTE", "Dashboard mute",
-                             f"minutes={minutes}")
+        await mute_member(chat, target_user_id, minutes)
+        await self.store.log(
+            chat_id, target_user_id, "MUTE", "Dashboard mute",
+            f"minutes={minutes}",
+        )
         await self.store.log_user_admin_action(
             chat_id, target_user_id, admin_user_id, "MUTE",
             f"minutes={minutes}",
@@ -184,10 +173,10 @@ class UserManagementService:
         allowed, error = await self._guard_target(chat_id, target_user_id)
         if not allowed:
             raise PermissionError(error)
-        result = await perform_unmute_member(chat, target_user_id, self.permission_service)
-        if not result.ok:
-            raise PermissionError(f"unmute_failed:{result.status.value}")
-        await self.store.log(chat_id, target_user_id, "UNMUTE", "Dashboard unmute", "")
+        await unmute_member(chat, target_user_id)
+        await self.store.log(
+            chat_id, target_user_id, "UNMUTE", "Dashboard unmute", ""
+        )
         await self.store.log_user_admin_action(
             chat_id, target_user_id, admin_user_id, "UNMUTE"
         )

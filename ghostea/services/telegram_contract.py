@@ -39,26 +39,29 @@ MEMBERSHIP_UPDATE_TYPES: FrozenSet[str] = frozenset(
 
 OTHER_UPDATE_TYPES: FrozenSet[str] = frozenset(
     {
-        "business_connection",
-        "business_message",
-        "edited_business_message",
-        "deleted_business_messages",
-        "guest_message",
-        "message_reaction",
-        "message_reaction_count",
         "inline_query",
         "chosen_inline_result",
         "callback_query",
         "shipping_query",
         "pre_checkout_query",
-        "purchased_paid_media",
         "poll",
         "poll_answer",
+        "my_chat_member",
+        "chat_member",
+        "chat_join_request",
         "chat_boost",
         "removed_chat_boost",
-        "managed_bot",
-        "subscription",
-        "stopped_message_generation",
+        "message_reaction",
+        "message_reaction_count",
+        "business_connection",
+        "business_message",
+        "edited_business_message",
+        "deleted_business_messages",
+        "purchased_paid_media",
+        "paid_media_purchased",
+        "direct_message_price_changed",
+        "direct_messages_topic",
+        "direct_messages_topic_deleted",
     }
 )
 
@@ -151,7 +154,6 @@ OPERATION_CONTRACTS: Mapping[str, Mapping[str, object]] = {
         "methods": ("unbanChatMember",),
         "chat_types": ("supergroup",),
         "required_admin_right": "can_restrict_members",
-        "basic_group_supported": False,
     },
     "set_default_permissions": {
         "methods": ("setChatPermissions",),
@@ -236,15 +238,11 @@ def validate_chat_type(chat_type: str) -> bool:
 
 def validate_permission_mapping(values: Mapping[str, object]) -> bool:
     """Return True only when a permission mapping uses known Bot API fields."""
-    if not isinstance(values, Mapping):
-        return False
-    return all(isinstance(key, str) and key in CHAT_PERMISSION_FIELDS for key in values)
+    return all(key in CHAT_PERMISSION_FIELDS for key in values)
 
 
 def validate_update_type(update_type: str) -> bool:
     """Recognize documented update families without treating them as handled."""
-    if not isinstance(update_type, str):
-        return False
     return (
         update_type in MESSAGE_UPDATE_TYPES
         or update_type in MEMBERSHIP_UPDATE_TYPES

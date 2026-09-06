@@ -33,7 +33,6 @@ class ChatCapabilities:
     supports_member_moderation: bool
     supports_message_deletion: bool
     supports_member_ban: bool
-    supports_member_unban: bool
     supports_member_restriction: bool
     supports_default_permissions: bool
     supports_group_settings: bool
@@ -71,7 +70,6 @@ class ChatCapabilities:
             "member_moderation": self.supports_member_moderation,
             "message_deletion": self.supports_message_deletion,
             "member_ban": self.supports_member_ban,
-            "member_unban": self.supports_member_unban,
             "member_restriction": self.supports_member_restriction,
             "default_permissions": self.supports_default_permissions,
             "group_settings": self.supports_group_settings,
@@ -79,7 +77,6 @@ class ChatCapabilities:
             "topic_messages": self.supports_forum_topic_messages,
             "topic_creation": self.supports_topic_management,
             "topic_management": self.supports_topic_management,
-            "topic_deletion": self.supports_topic_management,
             "forum_topic_messages": self.supports_forum_topic_messages,
             "public_username": self.supports_public_username,
             "private_chat_topics": self.supports_private_chat_topics,
@@ -99,7 +96,6 @@ class ChatCapabilities:
             "supports_member_moderation": self.supports_member_moderation,
             "supports_message_deletion": self.supports_message_deletion,
             "supports_member_ban": self.supports_member_ban,
-            "supports_member_unban": self.supports_member_unban,
             "supports_member_restriction": self.supports_member_restriction,
             "supports_default_permissions": self.supports_default_permissions,
             "supports_group_settings": self.supports_group_settings,
@@ -126,7 +122,6 @@ def resolve_chat_capabilities(context: Optional[ChatContext]) -> ChatCapabilitie
             supports_member_moderation=False,
             supports_message_deletion=False,
             supports_member_ban=False,
-            supports_member_unban=False,
             supports_member_restriction=False,
             supports_default_permissions=False,
             supports_group_settings=False,
@@ -154,7 +149,6 @@ def resolve_chat_capabilities(context: Optional[ChatContext]) -> ChatCapabilitie
             supports_member_moderation=False,
             supports_message_deletion=False,
             supports_member_ban=False,
-            supports_member_unban=False,
             supports_member_restriction=False,
             supports_default_permissions=False,
             supports_group_settings=False,
@@ -163,30 +157,6 @@ def resolve_chat_capabilities(context: Optional[ChatContext]) -> ChatCapabilitie
             supports_forum_topic_messages=private_topics,
             supports_public_username=False,
             supports_private_chat_topics=private_topics,
-        )
-
-    # Channel direct-message chats are represented as supergroups but are not
-    # ordinary moderation supergroups. Fail closed until explicitly supported.
-    if getattr(context, "is_direct_messages", False):
-        return ChatCapabilities(
-            chat_type="supergroup_direct_messages",
-            visibility=context.visibility,
-            is_group=False,
-            is_supergroup=True,
-            is_forum=False,
-            is_topic_message=False,
-            supports_member_moderation=False,
-            supports_message_deletion=False,
-            supports_member_ban=False,
-            supports_member_unban=False,
-            supports_member_restriction=False,
-            supports_default_permissions=False,
-            supports_group_settings=False,
-            supports_topics=False,
-            supports_topic_management=False,
-            supports_forum_topic_messages=False,
-            supports_public_username=False,
-            supports_private_chat_topics=False,
         )
 
     return ChatCapabilities(
@@ -199,7 +169,6 @@ def resolve_chat_capabilities(context: Optional[ChatContext]) -> ChatCapabilitie
         supports_member_moderation=True,
         supports_message_deletion=True,
         supports_member_ban=True,
-        supports_member_unban=is_supergroup,
         # Telegram's Bot API restrictChatMember/ChatMemberRestricted are
         # supergroup-only. Basic groups can still be moderated by deleting
         # messages and banning members, but cannot receive per-member mutes.
@@ -249,7 +218,6 @@ def capabilities_from_registry(row: Optional[Mapping[str, Any]]) -> ChatCapabili
         topic_id=None,
         visibility=visibility,
         private_topics_enabled=False,
-        is_direct_messages=bool(row.get("is_direct_messages")),
     )
     return resolve_chat_capabilities(context)
 
@@ -460,7 +428,7 @@ class BotPermissions:
         return self.is_admin and self.can_manage_topics
 
 
-async def resolve_bot_permissions(chat, bot_user_id: int, raise_on_error: bool = False) -> BotPermissions:
+async def resolve_bot_permissions(chat, bot_user_id: int) -> BotPermissions:
     """Fetch and normalize current bot permissions for a chat.
 
     This performs one Telegram API lookup and therefore must be cached by
@@ -472,8 +440,6 @@ async def resolve_bot_permissions(chat, bot_user_id: int, raise_on_error: bool =
     try:
         member = await chat.get_member(int(bot_user_id))
     except Exception:
-        if raise_on_error:
-            raise
         return BotPermissions()
 
     status = getattr(member, "status", None)

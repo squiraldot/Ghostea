@@ -25,9 +25,6 @@ class ChatContext:
     visibility: str = "private"
     # Bot API 9.3+: forum-topic mode can be enabled for private chats.
     private_topics_enabled: bool = False
-    # Bot API 9.2+: supergroup-shaped direct-messages chats for channels.
-    # These are intentionally outside Ghostea's moderation model.
-    is_direct_messages: bool = False
 
     @property
     def capabilities(self):
@@ -109,21 +106,9 @@ def build_chat_context(chat, message=None, private_topics_enabled=False) -> Opti
     # an ordinary group.
     is_private = chat.type == "private"
     is_forum = chat.type == "supergroup" and bool(getattr(chat, "is_forum", False))
-    is_direct_messages = chat.type == "supergroup" and bool(getattr(chat, "is_direct_messages", False))
     private_topics = bool(is_private and private_topics_enabled)
     thread_id = getattr(message, "message_thread_id", None) if message else None
-    topic_id = None
-    if (is_forum or private_topics) and thread_id is not None:
-        try:
-            topic_id = int(thread_id)
-        except (TypeError, ValueError, OverflowError):
-            # Malformed thread metadata must never create a topic scope.
-            topic_id = None
-
-    try:
-        chat_id = int(chat.id)
-    except (TypeError, ValueError, OverflowError):
-        return None
+    topic_id = int(thread_id) if (is_forum or private_topics) and thread_id is not None else None
 
     # For Telegram groups/supergroups, a public username is the stable Bot API
     # signal that the chat is public. Invite-only chats normally have no
@@ -137,7 +122,7 @@ def build_chat_context(chat, message=None, private_topics_enabled=False) -> Opti
     visibility = "public" if username else "private"
 
     return ChatContext(
-        chat_id=chat_id,
+        chat_id=int(chat.id),
         chat_type=str(chat.type),
         title=str(getattr(chat, "title", None) or ""),
         username=getattr(chat, "username", None),
@@ -147,7 +132,6 @@ def build_chat_context(chat, message=None, private_topics_enabled=False) -> Opti
         topic_id=topic_id,
         visibility=visibility,
         private_topics_enabled=private_topics,
-        is_direct_messages=is_direct_messages,
     )
 
 

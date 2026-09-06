@@ -6,18 +6,3 @@ services:
     startCommand: python main.py
     healthCheckPath: /health
     autoDeploy: true
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_KEY
-        sync: false
-      - key: DASHBOARD_API_KEY
-        sync: false
-      - key: DASHBOARD_ORIGIN
-        sync: false
-      - key: GHOSTEA_ADMIN_PASSWORD
-        sync: false
-      - key: GHOSTEA_SUPERADMIN_USERNAME
-        sync: false

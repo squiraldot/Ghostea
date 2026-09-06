@@ -63,12 +63,7 @@ def normalize_topic_id(chat_context, topic_id: Optional[int] = None):
     if not chat_context or not chat_context.is_topic_capable:
         return None
     value = topic_id if topic_id is not None else chat_context.topic_id
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
+    return int(value) if value is not None else None
 
 
 def scope_key(chat_context, mode=TOPIC_AWARE):

@@ -1,32 +1,24 @@
 import logging
 
-logger = logging.getLogger("Ghostea")
-
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ghostea.services.telegram_service import is_admin, mute_member, require_message_delete_permission, perform_delete_message, perform_mute_member
+from ghostea.services.telegram_service import is_admin, mute_member
 from ghostea.services.chat_context import build_chat_context
 from ghostea.services.chat_capabilities import resolve_chat_capabilities
 from ghostea.services.moderation_engine import ModerationContext
 from ghostea.utils import display_name
 from ghostea.services.topic_messaging import send_in_context
 
+logger = logging.getLogger("Ghostea")
 
-from ghostea.services.sender_identity import classify_sender, moderation_sender
-from ghostea.services.message_content import (
-    extract_message_content, is_command_message, message_update_kind,
-)
 
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     user = update.effective_user
     chat = update.effective_chat
-    sender_identity = classify_sender(message) if message else None
 
-    # H04: service updates can legitimately have no effective user. Resolve
-    # chat migration/topic lifecycle first; only moderation requires a user.
-    if not message or not chat:
+    if not message or not user or not chat:
         return
 
     # Telegram emits a service message when a basic group is migrated to a
@@ -41,9 +33,7 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         protection = context.application.bot_data.get("protection")
         if migrations:
             try:
-                result = await migrations.handle_migration(
-                    old_chat_id, new_chat_id, reason="telegram_migration"
-                )
+                await migrations.migrate(old_chat_id, new_chat_id)
                 if protection:
                     protection.discard_chat(old_chat_id)
                 security = context.application.bot_data.get("security")
@@ -52,44 +42,29 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 store = context.application.bot_data.get("phase3_store")
                 if store:
                     store.invalidate_chat_cache(old_chat_id, new_chat_id)
-                logger.info(
-                    "Chat migration handled and reconciled: %s -> %s result=%s",
-                    old_chat_id, new_chat_id, result,
-                )
-            except Exception:
-                # The journaled migration is durable and resumable. Do not
-                # pretend the lifecycle transition is fully verified when the
-                # authoritative Telegram refresh fails.
-                logger.exception(
-                    "Chat migration/reconciliation incomplete: %s -> %s",
-                    old_chat_id, new_chat_id,
-                )
-        return
 
-    update_kind = message_update_kind(update)
-    # Edited commands are still commands, not user content to moderate.
-    if update_kind == "edited_message" and is_command_message(message):
+                # The migration update itself describes the id transition, but
+                # not the authoritative post-migration username/forum state.
+                # Refresh from Telegram once, then reconcile the registry.
+                try:
+                    migrated_chat = await context.bot.get_chat(new_chat_id)
+                    migrated_context = build_chat_context(migrated_chat)
+                    if migrated_context and migrations:
+                        await migrations.reconcile_chat(
+                            migrated_context, reason="telegram_migration"
+                        )
+                except Exception:
+                    # State migration remains valid even if Telegram metadata
+                    # refresh is temporarily unavailable; the next normal
+                    # update will reconcile the registry.
+                    logger.exception(
+                        "Post-migration chat metadata reconciliation failed: %s -> %s",
+                        old_chat_id, new_chat_id,
+                    )
+                logger.info("Chat migration handled: %s -> %s", old_chat_id, new_chat_id)
+            except Exception:
+                logger.exception("Chat migration failed: %s -> %s", old_chat_id, new_chat_id)
         return
-    # H06: sender_chat represents a chat-backed sender (including anonymous
-    # administrators). Never turn it into a human member identity. Preserve
-    # topic/service bookkeeping, then stop before moderation.
-    safe_user = moderation_sender(message)
-    if safe_user is None:
-        try:
-            store = context.application.bot_data.get("phase3_store")
-            if store:
-                private_topics_enabled = bool(
-                    context.application.bot_data.get("private_topics_enabled", False)
-                )
-                service_context = build_chat_context(
-                    chat, message, private_topics_enabled=private_topics_enabled
-                )
-                if service_context and service_context.is_topic_message:
-                    await store.touch_topic(service_context, message)
-        except Exception:
-            logger.exception("Service/topic update registry handling failed")
-        return
-    user = safe_user
 
     private_topics_enabled = bool(
         context.application.bot_data.get("private_topics_enabled", False)
@@ -123,13 +98,6 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await store.touch_chat(chat_context)
     except Exception:
         logger.exception("Chat registry update failed")
-        # Do not continue under an unknown persistence state. The dashboard
-        # and moderation configuration rely on the same durable chat record.
-        return
-
-    # touch_chat() now also materializes default group settings. This happens
-    # before the admin fast-path so administrator-only activity still makes
-    # the group visible/configurable in the dashboard.
 
     # Phase 3: persist forum-topic metadata independently from moderation.
     # This runs before the text check so Telegram topic service messages
@@ -140,7 +108,7 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             logger.exception("Topic registry update failed")
 
-    text, content_kind = extract_message_content(message)
+    text = message.text or message.caption
     if not text:
         return
 
@@ -187,22 +155,13 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if detection:
-        delete_result = await perform_delete_message(
-            message, chat, context.application.bot_data.get("telegram_permissions")
-        )
-        if not delete_result.ok:
-            logger.warning(
-                "Moderated message delete did not succeed: category=%s status=%s detail=%s",
-                detection.category, delete_result.status.value, delete_result.detail,
+        try:
+            await message.delete()
+        except Exception:
+            logger.exception(
+                "Moderated message delete failed: category=%s",
+                detection.category,
             )
-            try:
-                await store.log(
-                    chat.id, user.id, "DELETE_FAILED", detection.reason,
-                    f"category={detection.category};update_kind={update_kind};content_kind={content_kind};action_status={delete_result.status.value};detail={delete_result.detail}",
-                    topic_id=chat_context.topic_id,
-                )
-            except Exception:
-                logger.exception("Failed to persist delete failure")
 
         if detection.action == "warn":
             try:
@@ -238,7 +197,7 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user.id,
                 f"DELETE_{detection.category.upper()}",
                 detection.reason,
-                f"risk_score={detection.score};topic_id={chat_context.topic_id};update_kind={update_kind};content_kind={content_kind}",
+                f"risk_score={detection.score};topic_id={chat_context.topic_id}",
                 topic_id=chat_context.topic_id,
             )
         return
@@ -255,11 +214,8 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if triggered:
             minutes = int(settings.get("flood_mute_minutes", 10))
-            result = await perform_mute_member(
-                chat, user.id, minutes,
-                permission_service=context.application.bot_data.get("telegram_permissions"),
-            )
-            if result.ok:
+            try:
+                await mute_member(chat, user.id, minutes)
                 await send_in_context(
                     chat,
                     f"🚨 {display_name(user)}\n\n"
@@ -267,16 +223,15 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     topic_id=chat_context.topic_id,
                 )
                 await store.log(
-                    chat.id, user.id, "FLOOD_MUTE", "Flood protection",
-                    f"minutes={minutes};risk_score=40;action_status={result.status.value}",
+                    chat.id,
+                    user.id,
+                    "FLOOD_MUTE",
+                    "Flood protection",
+                    f"minutes={minutes};risk_score=40;topic_id={chat_context.topic_id}",
                     topic_id=chat_context.topic_id,
                 )
-            else:
-                await store.log(
-                    chat.id, user.id, "FLOOD_MUTE_FAILED", "Flood protection",
-                    f"minutes={minutes};action_status={result.status.value};detail={result.detail}",
-                    topic_id=chat_context.topic_id,
-                )
+            except Exception:
+                logger.exception("Flood mute failed")
 
 
 async def announce(chat, user, count, action, settings, risk_score=None, topic_id=None):

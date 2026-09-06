@@ -9,7 +9,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from ghostea.services.chat_capabilities import capabilities_from_registry, resolve_forum_compatibility
-from ghostea.services.observability import OBSERVABILITY, new_request_id, set_request_id, reset_request_id
 
 
 MAX_BODY_BYTES = 32 * 1024
@@ -72,8 +71,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
     analytics = None
     admins = None
     user_management = None
-    permission_service = None
-    observability = OBSERVABILITY
     _async_loop = None
     _rate_lock = threading.Lock()
     _rate = defaultdict(deque)
@@ -188,15 +185,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             cls._cache[key] = (time.monotonic() + GET_CACHE_TTL, payload)
         return payload
 
-    @classmethod
-    def _invalidate_cache(cls, prefix=None):
-        with cls._cache_lock:
-            if prefix is None:
-                cls._cache.clear()
-            else:
-                for key in [k for k in cls._cache if k.startswith(prefix)]:
-                    cls._cache.pop(key, None)
-
     def _authorized(self):
         expected = os.getenv("DASHBOARD_API_KEY", "").strip()
         supplied = self.headers.get("Authorization", "")
@@ -268,9 +256,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
-        _obs_token = set_request_id(new_request_id("http"))
-        self._obs_token = _obs_token
-        OBSERVABILITY.emit("http_request", method="GET", path=urlparse(self.path).path)
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -289,17 +274,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/auth/me":
                 role = self.headers.get("X-Ghostea-Role", "")
                 admin_id = self.headers.get("X-Ghostea-Admin-Id", "")
-                current = None
-                if self.admins and admin_id.isdigit():
-                    try:
-                        current = self._run_async(self.admins.authorize(admin_id, role))
-                    except Exception:
-                        current = None
-                if not current:
-                    return _json(self, 401, {"error": "session_not_active"})
+                username = self.headers.get("X-Ghostea-Username", "")
                 return _json(self, 200, {
                     "authenticated": True,
-                    "admin": current,
+                    "admin": {
+                        "id": int(admin_id) if admin_id.isdigit() else 0,
+                        "username": username,
+                        "role": role,
+                    },
                 })
 
             if path == "/api/auth/admins":
@@ -307,20 +289,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 rows = self._run_async(self.admins.list_admins())
                 return _json(self, 200, {"admins": rows})
-
-            if path == "/api/diagnostics":
-                if not self._require_permission("read"):
-                    return
-                limit = 100
-                try:
-                    limit = max(1, min(int(parse_qs(parsed.query).get("limit", ["100"])[0]), 200))
-                except (TypeError, ValueError):
-                    pass
-                return _json(self, 200, {
-                    "ok": True,
-                    "service": "ghostea",
-                    "observability": OBSERVABILITY.snapshot(limit),
-                })
 
             if path == "/api/health":
                 # This is a real database check rather than a hard-coded flag.
@@ -337,182 +305,60 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "production_ready": bool(readiness.get("ready", True)),
                 })
 
-            if path == "/api/groups/diagnostics":
-                if not self._require_read(): return
-                diagnostics = {"ok": True, "registry": {"ok": False, "count": 0}, "settings": {"ok": False, "count": 0}}
-                try:
-                    rows = self._call_sync(
-                        self.store.db.select,
-                        "ghostea_chat_registry",
-                        {"select": "chat_id,chat_type,title,username,visibility,is_forum,last_seen_at", "limit": "200"},
-                    )
-                    diagnostics["registry"] = {"ok": True, "count": len(rows) if isinstance(rows, list) else 0}
-                    diagnostics["registry"]["rows"] = rows if isinstance(rows, list) else []
-                except Exception as exc:
-                    logger.exception("Group registry diagnostics failed")
-                    diagnostics["registry"]["error"] = str(exc)[:300]
-                try:
-                    rows = self._call_sync(
-                        self.store.db.select,
-                        "ghostea_group_settings",
-                        {"select": "chat_id,updated_at", "limit": "200"},
-                    )
-                    diagnostics["settings"] = {"ok": True, "count": len(rows) if isinstance(rows, list) else 0}
-                    diagnostics["settings"]["rows"] = rows if isinstance(rows, list) else []
-                except Exception as exc:
-                    logger.exception("Group settings diagnostics failed")
-                    diagnostics["settings"]["error"] = str(exc)[:300]
-                return _json(self, 200, diagnostics)
-
             if path == "/api/groups":
                 if not self._require_read(): return
                 cache_key = f"groups:{self.headers.get('X-Ghostea-Admin-Id','')}"
                 cached = self._cached_json(cache_key)
                 if cached is not None:
                     return _json(self, 200, cached)
-
-                # The registry is the authoritative discovery source: a chat
-                # can exist there even if settings were not materialized by an
-                # older bot version. Settings are then overlaid when present.
-                # Read the registry with only columns that are guaranteed by
-                # the canonical schema.  In particular, do not order by a
-                # migration-added column: older installations can have a
-                # partially upgraded registry and PostgREST would otherwise
-                # fail the entire request.
+                rows = self._call_sync(
+                    self.store.db.select,
+                    "ghostea_group_settings",
+                    {"select": "*", "order": "updated_at.desc", "limit": "200"},
+                )
+                # Phase 8 dashboard needs chat capabilities alongside settings.
+                # Registry is additive; if an older deployment has not populated
+                # it yet, settings-only rows remain fully usable.
                 try:
                     registry = self._call_sync(
                         self.store.db.select,
                         "ghostea_chat_registry",
-                        {"select": "*", "limit": "200"},
+                        {"select": "chat_id,chat_type,title,username,visibility,is_forum", "limit": "200"},
                     )
-                    if not isinstance(registry, list):
-                        registry = []
-                except Exception as exc:
-                    logger.exception("Group registry query failed")
-                    registry = []
-
-                try:
-                    settings_rows = self._call_sync(
-                        self.store.db.select,
-                        "ghostea_group_settings",
-                        {"select": "*", "limit": "200"},
-                    )
-                    if not isinstance(settings_rows, list):
-                        settings_rows = []
                 except Exception:
-                    # Registry data must remain useful even when settings are
-                    # temporarily unavailable.
-                    logger.exception("Group settings query failed")
-                    settings_rows = []
-
-                # An empty result is a valid state (e.g. a brand-new install).
-                # Do not turn it into a 503: the dashboard should render an empty
-                # list while the bot waits for its first group update.
-
-                settings_by_chat = {
-                    str(r.get("chat_id")): r
-                    for r in settings_rows
-                    if isinstance(r, dict) and r.get("chat_id") is not None
-                }
-
-                def normalize_group(info, fallback=None):
-                    """Build a dashboard-safe group without allowing one bad
-                    legacy row to break the entire groups response."""
-                    source = dict(fallback or {})
-                    if isinstance(info, dict):
-                        source.update(info)
-
-                    raw_chat_id = source.get("chat_id")
-                    try:
-                        chat_id = int(raw_chat_id)
-                    except (TypeError, ValueError, OverflowError):
-                        return None
-
-                    chat_type = str(source.get("chat_type") or "supergroup")
-                    if chat_type not in ("group", "supergroup"):
-                        chat_type = "supergroup"
-
-                    title = str(source.get("title") or "")
-                    username = source.get("username")
-                    visibility_value = str(source.get("visibility") or "private")
-                    is_forum = bool(source.get("is_forum", False))
-
-                    item = dict(fallback or {})
-                    if isinstance(info, dict):
-                        # Settings can contain all configuration fields, while
-                        # registry identity fields are authoritative.
-                        item.update(fallback or {})
-                        item.update(info)
-
-                    item["chat_id"] = chat_id
-                    item["chat_type"] = chat_type
-                    item["title"] = title
-                    item["username"] = username
-                    item["is_forum"] = bool(is_forum and chat_type == "supergroup")
-
-                    registry_row = {
-                        "chat_id": chat_id,
-                        "chat_type": chat_type,
-                        "title": title,
-                        "username": username,
-                        "visibility": visibility_value,
-                        "is_forum": item["is_forum"],
-                    }
-
-                    try:
-                        caps = capabilities_from_registry(registry_row)
-                        visibility = visibility_from_registry(registry_row)
-                        item["visibility"] = visibility.visibility
-                        item["username"] = visibility.username
-                        item["public_url"] = visibility.public_url
-                        item["access_label"] = visibility.access_label
-                        item["visibility_info"] = visibility.as_dict()
-                        item["capabilities"] = caps.as_dict()
-                        item["forum_compatibility"] = resolve_forum_compatibility(caps).as_dict()
-                    except Exception:
-                        # Identity/configuration should still render if a
-                        # legacy metadata value is malformed.
-                        logger.exception("Group metadata normalization failed: chat=%s", chat_id)
-                        item["visibility"] = "private"
-                        item["username"] = None
-                        item["public_url"] = None
-                        item["access_label"] = "Private / no public username"
-                        item["visibility_info"] = {
-                            "visibility": "private",
-                            "username": None,
-                            "public_url": None,
-                            "access_label": "Private / no public username",
-                            "is_public": False,
-                            "is_private": True,
-                            "can_show_public_link": False,
-                            "identity_label": "Private chat",
-                        }
-                        item["capabilities"] = {}
-                        item["forum_compatibility"] = {}
-
-                    return item
-
+                    registry = []
+                meta = {str(r.get("chat_id")): r for r in registry}
                 merged = []
-                registry_ids = set()
-
-                # Registry is the primary identity source.
-                for info in registry:
-                    item = normalize_group(info, settings_by_chat.get(str(info.get("chat_id"))))
-                    if item is not None:
-                        merged.append(item)
-                        registry_ids.add(str(item["chat_id"]))
-
-                # Settings-only rows remain visible for legacy installations.
-                for row in settings_rows:
-                    if not isinstance(row, dict):
-                        continue
-                    if str(row.get("chat_id")) in registry_ids:
-                        continue
-                    item = normalize_group(row)
-                    if item is not None:
-                        merged.append(item)
-
+                for row in rows:
+                    item = dict(row)
+                    info = meta.get(str(row.get("chat_id")))
+                    if info:
+                        for key in ("chat_type", "title", "username", "visibility", "is_forum"):
+                            item[key] = info.get(key)
+                    else:
+                        item.setdefault("chat_type", "supergroup")
+                        item.setdefault("visibility", "private")
+                        item.setdefault("is_forum", False)
+                    registry_row = {
+                        "chat_id": item.get("chat_id"),
+                        "chat_type": item.get("chat_type"),
+                        "title": item.get("title"),
+                        "username": item.get("username"),
+                        "visibility": item.get("visibility"),
+                        "is_forum": item.get("is_forum"),
+                    }
+                    caps = capabilities_from_registry(registry_row)
+                    visibility = visibility_from_registry(registry_row)
+                    item["visibility"] = visibility.visibility
+                    item["username"] = visibility.username
+                    item["public_url"] = visibility.public_url
+                    item["access_label"] = visibility.access_label
+                    item["visibility_info"] = visibility.as_dict()
+                    item["capabilities"] = caps.as_dict()
+                    item["forum_compatibility"] = resolve_forum_compatibility(caps).as_dict()
+                    merged.append(item)
                 return _json(self, 200, self._put_cache(cache_key, {"groups": merged}))
+
             if path.startswith("/api/groups/") and path.endswith("/topics"):
                 if not self._require_read(): return
                 parts = path.split("/")
@@ -680,9 +526,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return _json(self, 404, {"error": "not_found"})
 
     def do_POST(self):
-        _obs_token = set_request_id(new_request_id("http"))
-        self._obs_token = _obs_token
-        OBSERVABILITY.emit("http_request", method="POST", path=urlparse(self.path).path)
         parsed = urlparse(self.path)
 
         # Vercel authenticates against this server-to-server endpoint.
@@ -730,7 +573,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         payload.get("display_name", ""),
                     )
                 )
-                self._invalidate_cache()
                 return _json(self, 201, {"admin": admin})
             except ValueError as e:
                 return _json(self, 400, {"error": str(e)})
@@ -801,21 +643,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     result = self.user_management._run_action(
                         "unmute", chat_id, target_user_id, admin_id=current_admin_id
                     )
-                self._invalidate_cache(f"groups:{current_admin_id}")
                 return _json(self, 200, result)
             except PermissionError as error:
-                message = str(error)
-                if message == "target_lookup_failed":
-                    return _json(self, 503, {"error": "target_lookup_failed", "retryable": True})
-                if message == "target_is_admin":
-                    return _json(self, 403, {"error": "target_is_admin", "retryable": False})
-                if message.startswith("missing_bot_permission:"):
-                    return _json(self, 503, {"error": "bot_permission_unavailable", "retryable": True})
-                if message.startswith(("mute_failed:", "ban_failed:", "unmute_failed:", "unban_failed:")):
-                    return _json(self, 502, {"error": "telegram_action_failed", "detail": message.split(":", 1)[1], "retryable": False})
-                if message == "member_restriction_not_supported_for_basic_group":
-                    return _json(self, 409, {"error": message, "retryable": False})
-                return _json(self, 502, {"error": "telegram_action_failed", "retryable": False})
+                if str(error) == "target_lookup_failed":
+                    return _json(self, 503, {"error": "target_lookup_failed"})
+                return _json(self, 403, {"error": "target_is_admin"})
             except (ValueError, TypeError):
                 return _json(self, 400, {"error": "invalid_request"})
             except Exception:
@@ -854,9 +686,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
     def do_DELETE(self):
-        _obs_token = set_request_id(new_request_id("http"))
-        self._obs_token = _obs_token
-        OBSERVABILITY.emit("http_request", method="DELETE", path=urlparse(self.path).path)
         if not self._protected():
             return
         parsed = urlparse(self.path)
@@ -886,7 +715,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             result = self._run_async(
                 self.store.remove_custom_filter_by_id(chat_id, filter_id)
             )
-            self._invalidate_cache("groups:")
             return _json(self, 200, {"ok": True, "deleted": len(result or [])})
         except (ValueError, TypeError):
             return _json(self, 400, {"error": "invalid_request"})
@@ -894,9 +722,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
     def do_PATCH(self):
-        _obs_token = set_request_id(new_request_id("http"))
-        self._obs_token = _obs_token
-        OBSERVABILITY.emit("http_request", method="PATCH", path=urlparse(self.path).path)
         if not self._protected():
             return
 
@@ -914,7 +739,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return _json(self, 413, {"error": "payload_too_large"})
                 payload = json.loads(self.rfile.read(length) or b"{}")
                 result = self._run_async(self.admins.update(admin_id, payload))
-                self._invalidate_cache()
                 return _json(self, 200, {"admin": result})
             except ValueError as e:
                 return _json(self, 400, {"error": str(e)})
@@ -944,7 +768,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 else:
                     changes = {k:v for k,v in payload.items() if k != "clear"}
                     result = self._run_async(self.store.update_topic_settings(chat_id, topic_id, changes))
-                self._invalidate_cache("groups:")
                 return _json(self, 200, {"chat_id": chat_id, "topic_id": topic_id, "overrides": result})
             except ValueError as e:
                 return _json(self, 400, {"error": str(e)})
@@ -1042,7 +865,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Route through the store so the bot's short-lived settings cache
             # is invalidated immediately after a dashboard update.
             result = self._run_async(self.store.update_settings(chat_id, changes))
-            self._invalidate_cache("groups:")
             return _json(self, 200, result)
         except json.JSONDecodeError:
             return _json(self, 400, {"error": "invalid_json"})
@@ -1052,14 +874,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
 
-def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=None, production_readiness=None, permission_service=None):
+def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=None, production_readiness=None):
     port = int(os.getenv("PORT", "10000"))
     DashboardHandler.store = store
     DashboardHandler.analytics = analytics
     DashboardHandler.risk = risk
     DashboardHandler.admins = admins
     DashboardHandler.user_management = None
-    DashboardHandler.permission_service = permission_service
     DashboardHandler._async_loop = loop
 
     server = ThreadingHTTPServer(("0.0.0.0", port), DashboardHandler)
@@ -1077,7 +898,7 @@ def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=No
     if bot is not None:
         from ghostea.services.user_management_service import UserManagementService
 
-        manager = UserManagementService(store, bot, permission_service=permission_service)
+        manager = UserManagementService(store, bot)
 
         async def _profile(chat_id, user_id):
             return await manager.profile(chat_id, user_id)

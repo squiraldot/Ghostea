@@ -74,36 +74,28 @@ class AdminService:
             "username": f"eq.{username}",
             "limit": "1",
         })
-        # If this account already exists, bootstrap is complete. Do not require
-        # the one-time bootstrap password on every future process restart.
-        if rows:
-            return
-        # A fresh database still needs the bootstrap secret to create the first
-        # Super Admin. Without it, leave the database untouched and let normal
-        # authentication fail closed until the operator configures the secret.
-        if not password:
-            return
-        try:
-            await self.store._call(
-                self.store.db.insert,
-                "ghostea_admins",
-                {
-                    "username": username,
-                    "display_name": "Super Admin",
-                    "password_hash": _hash_password(password),
-                    "role": "super_admin",
-                    "enabled": True,
-                },
-            )
-        except RuntimeError as error:
-            # Another request/process may have won the bootstrap race.
-            # Re-read the account and continue if it now exists.
-            rows = await self._rows({
-                "username": f"eq.{username}",
-                "limit": "1",
-            })
-            if not rows:
-                raise error
+        if not rows:
+            try:
+                await self.store._call(
+                    self.store.db.insert,
+                    "ghostea_admins",
+                    {
+                        "username": username,
+                        "display_name": "Super Admin",
+                        "password_hash": _hash_password(password),
+                        "role": "super_admin",
+                        "enabled": True,
+                    },
+                )
+            except RuntimeError as error:
+                # Another request/process may have won the bootstrap race.
+                # Re-read the account and continue if it now exists.
+                rows = await self._rows({
+                    "username": f"eq.{username}",
+                    "limit": "1",
+                })
+                if not rows:
+                    raise error
 
     async def authenticate(self, username, password):
         username = str(username or "").strip().lower()
@@ -133,21 +125,11 @@ class AdminService:
 
     @staticmethod
     def public(admin):
-        if not isinstance(admin, dict):
-            return None
-        try:
-            admin_id = int(admin["id"])
-        except (KeyError, TypeError, ValueError, OverflowError):
-            return None
-        role = str(admin.get("role") or "")
-        username = str(admin.get("username") or "").strip().lower()
-        if not username or role not in ROLES:
-            return None
         return {
-            "id": admin_id,
-            "username": username,
-            "display_name": admin.get("display_name") or username,
-            "role": role,
+            "id": int(admin["id"]),
+            "username": admin["username"],
+            "display_name": admin.get("display_name") or admin["username"],
+            "role": admin["role"],
             "enabled": bool(admin.get("enabled", True)),
             "created_at": admin.get("created_at"),
             "last_login_at": admin.get("last_login_at"),

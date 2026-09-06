@@ -8,8 +8,6 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
-    TypeHandler,
-    ApplicationHandlerStop,
     filters,
 )
 
@@ -71,11 +69,6 @@ from ghostea.services.user_management_service import UserManagementService
 from ghostea.services.chat_migration_service import ChatMigrationService
 from ghostea.services.forum_topic_service import ForumTopicService
 from ghostea.services.production_readiness import local_readiness, readiness_summary
-from ghostea.services.permission_service import TelegramPermissionService
-from ghostea.services.state_recovery import StateRecoveryService
-from ghostea.services.telegram_resilience import TelegramErrorPolicy
-from ghostea.services.concurrency import UpdateDeduplicator
-from ghostea.services.observability import OBSERVABILITY, new_request_id, set_request_id, reset_request_id
 from ghostea.storage.database import SupabaseREST
 from ghostea.storage.phase3_store import Phase3Store
 from ghostea.web_server import start_web_server
@@ -94,10 +87,7 @@ def create_application():
         raise RuntimeError("DASHBOARD_API_KEY is required.")
     if not os.getenv("DASHBOARD_ORIGIN", "").strip():
         raise RuntimeError("DASHBOARD_ORIGIN is required.")
-    # GHOSTEA_ADMIN_PASSWORD is only needed when AdminService must bootstrap
-    # the first dashboard Super Admin. Existing database-backed admins can
-    # authenticate without keeping the bootstrap secret in the environment.
-    # Keep the missing value visible through production-readiness diagnostics.
+
     readiness = readiness_summary(local_readiness())
     if not readiness["ready"]:
         logger.warning("Ghostea production readiness has failed checks: %s", readiness["checks"])
@@ -119,10 +109,10 @@ def create_application():
     analytics = AnalyticsService(store)
     admins = AdminService(store)
     verification = VerificationService(store)
-    security = SecurityService(store, None)  # bot/permissions are attached after Application creation
+    security = SecurityService(store, None)  # bot is attached after Application creation
     risk = RiskService(store)
     chat_migrations = ChatMigrationService(store)
-    forum_topics = ForumTopicService(store, None)  # bot/permissions attached after Application creation
+    forum_topics = ForumTopicService(store, None)  # bot attached after Application creation
 
     async def post_init(application):
         try:
@@ -133,31 +123,9 @@ def create_application():
         except Exception:
             logger.exception("Warning migration failed")
 
-        # Reconcile legacy installations where chats were registered but
-        # group settings were never materialized (notably when the first
-        # observed message was from an administrator). This is idempotent.
-        try:
-            registry_rows = await store._call(
-                store.db.select,
-                "ghostea_chat_registry",
-                {"select": "chat_id", "limit": "500"},
-            )
-            reconciled = 0
-            for row in registry_rows:
-                if row.get("chat_id") is None:
-                    continue
-                await store.get_settings(int(row["chat_id"]))
-                reconciled += 1
-            if reconciled:
-                logger.info("Reconciled group settings for %s registered chats.", reconciled)
-        except Exception:
-            # Startup should remain observable and fail closed only for
-            # genuinely unavailable core dependencies.
-            logger.exception("Legacy group-settings reconciliation failed")
-
         # Bot API 9.3: private-chat forum topic mode is a bot-account setting.
         try:
-            me = await telegram_error_policy.call_read(application.bot.get_me)
+            me = await application.bot.get_me()
             application.bot_data["private_topics_enabled"] = bool(
                 getattr(me, "has_topics_enabled", False)
             )
@@ -177,13 +145,9 @@ def create_application():
         # Persistent security recovery: raid locks and verification expiry.
         try:
             security.bot = application.bot
-            recovery = StateRecoveryService(
-                store, protection, security, permission_service=permission_service
-            )
-            recovery_result = await recovery.recover()
+            await security.start()
             application.bot_data["security"] = security
-            application.bot_data["state_recovery"] = recovery
-            logger.info("Ghostea state recovery completed: %s", recovery_result)
+            logger.info("Ghostea security recovery started.")
         except Exception:
             logger.exception("Security recovery failed")
             raise
@@ -194,7 +158,6 @@ def create_application():
                 store, analytics, application.bot, risk, admins,
                 loop=asyncio.get_running_loop(),
                 production_readiness=application.bot_data.get("production_readiness", {}),
-                permission_service=permission_service,
             )
             application.bot_data["web_server"] = server
             logger.info("Ghostea web server started.")
@@ -220,19 +183,8 @@ def create_application():
         .post_shutdown(post_shutdown)
         .build()
     )
-    permission_service = TelegramPermissionService(application.bot)
-    telegram_error_policy = TelegramErrorPolicy()
-    update_deduplicator = UpdateDeduplicator(ttl_seconds=180, max_entries=20000)
-    chat_migrations.attach_runtime(
-        bot=application.bot,
-        permission_service=permission_service,
-    )
-    security.permission_service = permission_service
-    moderation.bot = application.bot
-    moderation.permission_service = permission_service
-    user_management = UserManagementService(store, application.bot, permission_service=permission_service)
+    user_management = UserManagementService(store, application.bot)
     forum_topics.bot = application.bot
-    forum_topics.permission_service = permission_service
 
     application.bot_data.update({
         "abuse_filter": abuse_filter,
@@ -252,35 +204,7 @@ def create_application():
         "chat_migrations": chat_migrations,
         "forum_topics": forum_topics,
         "production_readiness": readiness,
-        "telegram_permissions": permission_service,
-        "telegram_error_policy": telegram_error_policy,
-        "update_deduplicator": update_deduplicator,
-        "observability": OBSERVABILITY,
     })
-
-    async def establish_update_context(update, context):
-        token = set_request_id(new_request_id("tg"))
-        context.chat_data["_ghostea_request_token"] = token
-        OBSERVABILITY.emit(
-            "update_received",
-            update_id=getattr(update, "update_id", None),
-            update_kind=type(update).__name__,
-        )
-
-    application.add_handler(TypeHandler(Update, establish_update_context), group=-2)
-
-    # H10 — suppress duplicate Telegram updates before any user-visible or
-    # destructive handler executes. First delivery is allowed; duplicates are
-    # stopped for a bounded TTL to avoid double warnings/actions.
-    async def deduplicate_update(update, context):
-        dedup = context.application.bot_data.get("update_deduplicator")
-        if dedup and not await dedup.first(getattr(update, "update_id", None)):
-            logger.warning("Duplicate Telegram update suppressed: update_id=%s", getattr(update, "update_id", None))
-            OBSERVABILITY.emit("duplicate_update", level="WARNING",
-                               update_id=getattr(update, "update_id", None))
-            raise ApplicationHandlerStop
-
-    application.add_handler(TypeHandler(Update, deduplicate_update), group=-1)
 
     # Core
     application.add_handler(CommandHandler("start", start_command))
@@ -350,59 +274,6 @@ def create_application():
     application.add_handler(CommandHandler("compatibility", compatibility_command))
     application.add_handler(CommandHandler("readiness", readiness_command))
 
-
-    # H02 — Telegram membership lifecycle.
-    # Use the documented PTB ChatMemberHandler for top-level my_chat_member
-    # updates. This is more precise than a generic TypeHandler and matches the
-    # official PTB example for tracking which chats the bot belongs to.
-    from telegram.ext import ChatMemberHandler
-    from ghostea.handlers.permission_events import handle_my_chat_member, handle_chat_member
-
-    application.add_handler(
-        ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER),
-        group=0,
-    )
-    application.add_handler(
-        ChatMemberHandler(handle_chat_member, ChatMemberHandler.CHAT_MEMBER),
-        group=0,
-    )
-
-    # Register every supported group/supergroup as soon as Telegram delivers
-    # ANY message/update carrying an effective chat. This is intentionally
-    # before the command/moderation handlers. Telegram does not expose an API
-    # to enumerate all groups a bot belongs to, so existing groups become
-    # discoverable again as soon as the bot receives their next command/message.
-    async def _ensure_chat_registered(update, context):
-        chat = getattr(update, "effective_chat", None)
-        if not chat or getattr(chat, "type", None) not in {"group", "supergroup"}:
-            return
-        store = context.application.bot_data.get("phase3_store")
-        if not store:
-            return
-        try:
-            private_topics_enabled = bool(
-                context.application.bot_data.get("private_topics_enabled", False)
-            )
-            from ghostea.services.chat_context import build_chat_context
-            message = getattr(update, "effective_message", None)
-            chat_context = build_chat_context(
-                chat, message, private_topics_enabled=private_topics_enabled
-            )
-            if chat_context and chat_context.is_supported:
-                await store.touch_chat(chat_context)
-        except Exception:
-            logger.exception("Early chat registration failed: chat=%s", getattr(chat, "id", None))
-
-    application.add_handler(
-        TypeHandler(Update, _ensure_chat_registered),
-        group=1,
-    )
-    # H04 — edited messages are a distinct Telegram update family. Register
-    # before the generic message handler so edited text/captions are evaluated
-    # by the same moderation pipeline as new content.
-    application.add_handler(
-        MessageHandler(filters.UpdateType.EDITED_MESSAGE, check_message)
-    )
     # Join events must be registered before the generic message handler.
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members)
@@ -412,18 +283,7 @@ def create_application():
     )
 
     async def error_handler(update, context):
-        error = context.error
-        # Telegram returns 409 when another polling connection briefly owns
-        # getUpdates (commonly during a Render deploy/restart overlap). The
-        # polling loop reconnects and the next getUpdates succeeds; do not
-        # misclassify this transient condition as an unhandled bot failure.
-        if error and "terminated by other getUpdates request" in str(error):
-            logger.warning(
-                "Telegram polling conflict detected; another bot instance "
-                "briefly owned getUpdates. The polling loop will reconnect."
-            )
-            return
-        logger.error("Unhandled bot error: %s", error, exc_info=True)
+        logger.error("Unhandled bot error: %s", context.error, exc_info=True)
 
     application.add_error_handler(error_handler)
     return application
@@ -434,5 +294,4 @@ def run():
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=False,
-        bootstrap_retries=5,
     )

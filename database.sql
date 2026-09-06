@@ -1,32 +1,17 @@
 -- Ghostea database schema
--- Single-file Supabase schema + safe upgrade/migration script.
--- Run the ENTIRE file in Supabase SQL Editor. It is idempotent and safe to re-run.
---
--- Legacy deployment preflight: some older Ghostea installs created
--- ghostea_moderation_logs before topic support. Ensure topic_id exists before
--- ANY topic-aware index is attempted. This is intentionally idempotent.
-do $$
-begin
-    if to_regclass('public.ghostea_moderation_logs') is not null then
-        alter table public.ghostea_moderation_logs
-            add column if not exists topic_id bigint;
-    end if;
-end $$;
-
+-- Run this once in Supabase SQL Editor.
 -- The application uses the server-side SUPABASE_KEY only.
 -- Never expose that key in the Vercel browser bundle.
 
 -- Phase 1: canonical chat registry. One row per Telegram chat used by Ghostea.
--- This section is deliberately ordered for OLD databases too:
--- 1) create the table when missing
--- 2) add missing legacy columns
--- 3) backfill/normalize legacy values
--- 4) add constraints and indexes only after their columns exist
+-- This stores capabilities only; moderation settings remain group-scoped for now.
 create table if not exists ghostea_chat_registry (
     chat_id bigint primary key,
     chat_type text not null check (chat_type in ('group', 'supergroup')),
     title text,
     username text,
+    -- Telegram's public/private signal for group chats is the presence of a
+    -- public username. Basic groups cannot be assigned a public username.
     visibility text not null default 'private'
         check (visibility in ('private', 'public')),
     is_forum boolean not null default false,
@@ -35,79 +20,11 @@ create table if not exists ghostea_chat_registry (
     updated_at timestamptz not null default now()
 );
 
--- Safe upgrade for installations created by older Ghostea builds.
--- Never reference a migration-added column until it has been added.
-alter table ghostea_chat_registry
-    add column if not exists chat_type text;
-alter table ghostea_chat_registry
-    add column if not exists title text;
-alter table ghostea_chat_registry
-    add column if not exists username text;
-alter table ghostea_chat_registry
-    add column if not exists visibility text not null default 'private';
-alter table ghostea_chat_registry
-    add column if not exists is_forum boolean not null default false;
-alter table ghostea_chat_registry
-    add column if not exists first_seen_at timestamptz not null default now();
-alter table ghostea_chat_registry
-    add column if not exists last_seen_at timestamptz not null default now();
-alter table ghostea_chat_registry
-    add column if not exists updated_at timestamptz not null default now();
+create index if not exists idx_ghostea_chat_registry_forum
+    on ghostea_chat_registry (is_forum);
 
--- Backfill legacy rows before applying canonical constraints.
-update ghostea_chat_registry
-set chat_type = coalesce(nullif(chat_type, ''), 'supergroup')
-where chat_type is null or chat_type = '';
-
-update ghostea_chat_registry
-set visibility = case
-    when visibility in ('public', 'private') then visibility
-    else 'private'
-end
-where visibility is null or visibility not in ('public', 'private');
-
-update ghostea_chat_registry
-set is_forum = coalesce(is_forum, false)
-where is_forum is null;
-
-alter table ghostea_chat_registry
-    alter column chat_type set not null;
-
-alter table ghostea_chat_registry
-    alter column visibility set not null;
-
-alter table ghostea_chat_registry
-    alter column is_forum set not null;
-
--- Add constraints only after all referenced columns exist.
-do $$
-begin
-    if not exists (
-        select 1
-        from pg_constraint
-        where conname = 'ghostea_chat_registry_chat_type'
-          and conrelid = 'ghostea_chat_registry'::regclass
-    ) then
-        alter table ghostea_chat_registry
-            add constraint ghostea_chat_registry_chat_type
-            check (chat_type in ('group', 'supergroup'));
-    end if;
-end $$;
-
-do $$
-begin
-    if not exists (
-        select 1
-        from pg_constraint
-        where conname = 'ghostea_chat_registry_visibility'
-          and conrelid = 'ghostea_chat_registry'::regclass
-    ) then
-        alter table ghostea_chat_registry
-            add constraint ghostea_chat_registry_visibility
-            check (visibility in ('public', 'private'));
-    end if;
-end $$;
-
+-- A basic Telegram group cannot be a Forum; forum is a supergroup
+-- capability. Keep the invariant in the database as well as application code.
 do $$
 begin
     if not exists (
@@ -122,8 +39,23 @@ begin
     end if;
 end $$;
 
-create index if not exists idx_ghostea_chat_registry_forum
-    on ghostea_chat_registry (is_forum);
+-- Safe upgrade for databases created before Phase 11.
+alter table ghostea_chat_registry
+    add column if not exists visibility text not null default 'private';
+
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'ghostea_chat_registry_visibility'
+          and conrelid = 'ghostea_chat_registry'::regclass
+    ) then
+        alter table ghostea_chat_registry
+            add constraint ghostea_chat_registry_visibility
+            check (visibility in ('private', 'public'));
+    end if;
+end $$;
 
 create index if not exists idx_ghostea_chat_registry_visibility
     on ghostea_chat_registry (visibility);
@@ -141,15 +73,11 @@ create table if not exists ghostea_topic_registry (
     name text,
     is_active boolean not null default true,
     is_closed boolean not null default false,
-    is_hidden boolean not null default false,
     first_seen_at timestamptz not null default now(),
     last_seen_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     primary key (chat_id, topic_id)
 );
-
-alter table if exists ghostea_topic_registry
-    add column if not exists is_hidden boolean not null default false;
 
 create index if not exists idx_ghostea_topic_registry_chat_activity
     on ghostea_topic_registry(chat_id, is_active, updated_at desc);
@@ -206,16 +134,6 @@ create table if not exists ghostea_group_settings (
     updated_at timestamptz not null default now()
 );
 
--- ============================================================
--- Deployment repair — materialize settings for every discovered chat
--- ============================================================
--- Older Ghostea builds registered chats in ghostea_chat_registry before
--- get_settings() was reached. The dashboard must not lose those groups.
-insert into ghostea_group_settings (chat_id)
-select r.chat_id
-from ghostea_chat_registry r
-on conflict (chat_id) do nothing;
-
 create table if not exists ghostea_warnings (
     chat_id bigint not null,
     user_id bigint not null,
@@ -233,15 +151,12 @@ create table if not exists ghostea_warning_history (
     active boolean not null default true,
     created_at timestamptz not null default now()
 );
-
--- Safe upgrade for databases created by earlier Ghostea phases.
--- IMPORTANT: add the column before any index references it. Otherwise an
--- existing pre-warning-decay table causes the migration to stop early.
-alter table ghostea_warning_history
-  add column if not exists active boolean not null default true;
-
 create index if not exists idx_ghostea_warning_history_chat_user
 on ghostea_warning_history(chat_id, user_id, created_at desc);
+
+-- Safe upgrade for databases created by earlier Ghostea phases.
+alter table ghostea_warning_history
+  add column if not exists active boolean not null default true;
 
 create index if not exists idx_ghostea_warning_history_active
 on ghostea_warning_history(chat_id, user_id, active, created_at desc);
@@ -256,9 +171,6 @@ create table if not exists ghostea_custom_filters (
     unique(chat_id, filter_type, value)
 );
 
--- Deployment repair note:
--- Existing installations may already have this table without topic_id.
--- The ALTER below is intentionally kept before every topic_id index.
 create table if not exists ghostea_moderation_logs (
     id bigint generated by default as identity primary key,
     chat_id bigint not null,
@@ -269,17 +181,14 @@ create table if not exists ghostea_moderation_logs (
     details text,
     created_at timestamptz not null default now()
 );
-
--- Safe upgrade for databases created before Phase 6.
--- IMPORTANT: add topic_id before any index references it. Otherwise an
--- existing pre-topic table fails with "column topic_id does not exist".
-alter table if exists ghostea_moderation_logs
-  add column if not exists topic_id bigint;
-
 create index if not exists idx_ghostea_moderation_logs_chat
 on ghostea_moderation_logs(chat_id, created_at desc);
 create index if not exists idx_ghostea_moderation_logs_chat_topic_time
 on ghostea_moderation_logs(chat_id, topic_id, created_at desc);
+
+-- Safe upgrade for databases created before Phase 6.
+alter table ghostea_moderation_logs
+  add column if not exists topic_id bigint;
 
 create index if not exists idx_ghostea_moderation_logs_chat_topic_user_time
 on ghostea_moderation_logs(chat_id, topic_id, user_id, created_at desc);

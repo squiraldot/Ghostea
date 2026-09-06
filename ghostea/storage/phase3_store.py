@@ -25,7 +25,6 @@ class Phase3Store:
         self._topic_touch = {}
         self._topic_settings_cache = {}
         self._reputation_locks = {}
-        self._cache_locks = {}
         self._cache_ttl = 10.0
         self._directory_touch_ttl = 60.0
         self._chat_touch_ttl = 60.0
@@ -40,34 +39,6 @@ class Phase3Store:
         for key in list(self._filters_cache):
             if key[0] == chat_id:
                 self._filters_cache.pop(key, None)
-
-    def clear_runtime_caches(self):
-        """Drop all process-local caches after restart/recovery boundaries.
-
-        Durable state remains in Supabase; these structures are only accelerators
-        and throttles. Clearing them prevents stale pre-recovery decisions.
-        """
-        self._settings_cache.clear()
-        self._filters_cache.clear()
-        self._directory_touch.clear()
-        self._chat_touch.clear()
-        self._topic_touch.clear()
-        self._topic_settings_cache.clear()
-        self._reputation_locks.clear()
-        self._cache_locks.clear()
-
-    async def _cache_lock(self, key):
-        key = tuple(key) if isinstance(key, (tuple, list)) else key
-        lock = self._cache_locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._cache_locks[key] = lock
-        # Bound idle lock objects; never evict a currently-held lock.
-        if len(self._cache_locks) > 20000:
-            for old_key, old_lock in list(self._cache_locks.items())[:1000]:
-                if not old_lock.locked():
-                    self._cache_locks.pop(old_key, None)
-        return lock
 
     def invalidate_chat_cache(self, *chat_ids):
         """Clear transient state after a Telegram chat-id migration."""
@@ -112,11 +83,6 @@ class Phase3Store:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
-            # Materialize settings first so the registry remains the final
-            # write for compatibility with lightweight store adapters/tests.
-            # More importantly, this closes the administrator-first-message
-            # gap where registry existed but settings did not.
-            await self.get_settings(chat_id)
             return await self._call(self.db.upsert, "ghostea_chat_registry", row)
         except Exception:
             self._chat_touch.pop(chat_id, None)
@@ -125,32 +91,25 @@ class Phase3Store:
 
     @staticmethod
     def _topic_event(message):
-        """Return (state, name, hidden) for Telegram forum-topic service messages."""
+        """Return (state, name) for Telegram forum-topic service messages."""
         if not message:
-            return None, None, None
+            return None, None
 
         created = getattr(message, "forum_topic_created", None)
         if created is not None:
-            return "created", getattr(created, "name", None), False
+            return "created", getattr(created, "name", None)
 
         edited = getattr(message, "forum_topic_edited", None)
         if edited is not None:
-            return "edited", getattr(edited, "name", None), None
+            return "edited", getattr(edited, "name", None)
 
         if getattr(message, "forum_topic_closed", None) is not None:
-            return "closed", None, None
+            return "closed", None
         if getattr(message, "forum_topic_reopened", None) is not None:
-            return "reopened", None, False
-        if getattr(message, "general_forum_topic_hidden", None) is not None:
-            return "hidden", None, True
-        if getattr(message, "general_forum_topic_unhidden", None) is not None:
-            return "unhidden", None, False
-        # Some PTB versions may expose a deleted-topic service field; keep the
-        # parser defensive, but do not depend on it because the Bot API does
-        # not promise a dedicated topic-deletion update.
+            return "reopened", None
         if getattr(message, "forum_topic_deleted", None) is not None:
-            return "deleted", None, None
-        return None, None, None
+            return "deleted", None
+        return None, None
 
     async def touch_topic(self, chat_context, message=None):
         """Persist forum-topic metadata with a throttled activity update.
@@ -169,7 +128,7 @@ class Phase3Store:
 
         chat_id = int(chat_context.chat_id)
         topic_id = int(chat_context.topic_id)
-        event, event_name, event_hidden = self._topic_event(message)
+        event, event_name = self._topic_event(message)
         key = (chat_id, topic_id)
         now = time.monotonic()
 
@@ -187,7 +146,6 @@ class Phase3Store:
             "name": event_name,
             "is_active": True,
             "is_closed": False,
-            "is_hidden": False,
             "last_seen_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -211,7 +169,6 @@ class Phase3Store:
                 row["name"] = current.get("name")
                 row["is_active"] = bool(current.get("is_active", True))
                 row["is_closed"] = bool(current.get("is_closed", False))
-                row["is_hidden"] = bool(current.get("is_hidden", False))
         except Exception:
             # A missing Phase 3 table should be visible to deployment
             # diagnostics rather than silently corrupting moderation state.
@@ -220,29 +177,14 @@ class Phase3Store:
 
         if event in ("created", "edited") and event_name:
             row["name"] = event_name
-        if event_hidden is not None:
-            row["is_hidden"] = bool(event_hidden)
-        if event == "closed":
+        elif event == "closed":
             row["is_closed"] = True
         elif event == "reopened":
-            row["is_closed"] = False
-            row["is_hidden"] = False
-            row["is_active"] = True
-        elif event == "hidden":
-            row["is_hidden"] = True
-            row["is_closed"] = True
-        elif event == "unhidden":
-            row["is_hidden"] = False
             row["is_closed"] = False
             row["is_active"] = True
         elif event == "deleted":
             row["is_active"] = False
             row["is_closed"] = True
-            row["is_hidden"] = False
-        elif event == "created":
-            row["is_active"] = True
-            row["is_closed"] = False
-            row["is_hidden"] = False
 
         try:
             return await self._call(
@@ -252,7 +194,7 @@ class Phase3Store:
             self._topic_touch.pop(key, None)
             raise
 
-    async def upsert_topic_lifecycle(self, chat_id, topic_id, name=None, is_active=True, is_closed=False, is_hidden=False):
+    async def upsert_topic_lifecycle(self, chat_id, topic_id, name=None, is_active=True, is_closed=False):
         """Persist an explicit forum topic lifecycle transition."""
         now = datetime.now(timezone.utc).isoformat()
         payload = {
@@ -261,7 +203,6 @@ class Phase3Store:
             "name": name,
             "is_active": bool(is_active),
             "is_closed": bool(is_closed),
-            "is_hidden": bool(is_hidden),
             "last_seen_at": now,
             "updated_at": now,
         }
@@ -474,65 +415,56 @@ class Phase3Store:
             self._directory_touch.pop(key, None)
 
     async def get_settings(self, chat_id):
-        chat_id = int(chat_id)
         now = time.monotonic()
-        cached = self._settings_cache.get(chat_id)
+        cached = self._settings_cache.get(int(chat_id))
         if cached and cached[0] > now:
             return dict(cached[1])
 
-        lock = await self._cache_lock(("settings", chat_id))
-        async with lock:
-            now = time.monotonic()
-            cached = self._settings_cache.get(chat_id)
-            if cached and cached[0] > now:
-                return dict(cached[1])
+        rows = await self._call(
+            self.db.select,
+            "ghostea_group_settings",
+            {"chat_id": f"eq.{chat_id}", "limit": "1"},
+        )
 
-            rows = await self._call(
-                self.db.select,
-                "ghostea_group_settings",
-                {"chat_id": f"eq.{chat_id}", "limit": "1"},
-            )
+        if rows:
+            self._settings_cache[int(chat_id)] = (now + self._cache_ttl, dict(rows[0]))
+            return rows[0]
 
-            if rows:
-                value = dict(rows[0])
-                self._settings_cache[chat_id] = (time.monotonic() + self._cache_ttl, value)
-                return value
+        defaults = {
+            "chat_id": chat_id,
+            "max_warnings": DEFAULT_MAX_WARNINGS,
+            "mute1_minutes": DEFAULT_MUTE_MINUTES[1],
+            "mute2_minutes": DEFAULT_MUTE_MINUTES[2],
+            "flood_window_seconds": DEFAULT_SPAM_WINDOW_SECONDS,
+            "flood_message_limit": DEFAULT_SPAM_MESSAGE_LIMIT,
+            "flood_mute_minutes": DEFAULT_SPAM_MUTE_MINUTES,
+            "blocked_link_action": DEFAULT_BLOCKED_LINK_ACTION,
+            "abuse_filter_enabled": True,
+            "spam_filter_enabled": True,
+            "link_filter_enabled": True,
+            "flood_protection_enabled": True,
+            "welcome_enabled": True,
+            "antiraid_enabled": True,
+            "antiraid_join_limit": 8,
+            "antiraid_window_seconds": 20,
+            "antiraid_lock_minutes": 10,
+            "auto_cleanup_enabled": False,
+            "verification_enabled": True,
+            "verification_timeout_seconds": 120,
+            "min_account_age_days": 0,
+            "new_member_restriction_minutes": 0,
+            "repeated_message_window_seconds": 60,
+            "repeated_message_limit": 3,
+            "mention_spam_limit": 6,
+            "max_message_length": 4000,
+            "warning_decay_enabled": True,
+            "warning_decay_days": 30,
+            "cleanup_max_age_days": 30,
+        }
 
-            defaults = {
-                "chat_id": chat_id,
-                "max_warnings": DEFAULT_MAX_WARNINGS,
-                "mute1_minutes": DEFAULT_MUTE_MINUTES[1],
-                "mute2_minutes": DEFAULT_MUTE_MINUTES[2],
-                "flood_window_seconds": DEFAULT_SPAM_WINDOW_SECONDS,
-                "flood_message_limit": DEFAULT_SPAM_MESSAGE_LIMIT,
-                "flood_mute_minutes": DEFAULT_SPAM_MUTE_MINUTES,
-                "blocked_link_action": DEFAULT_BLOCKED_LINK_ACTION,
-                "abuse_filter_enabled": True,
-                "spam_filter_enabled": True,
-                "link_filter_enabled": True,
-                "flood_protection_enabled": True,
-                "welcome_enabled": True,
-                "antiraid_enabled": True,
-                "antiraid_join_limit": 8,
-                "antiraid_window_seconds": 20,
-                "antiraid_lock_minutes": 10,
-                "auto_cleanup_enabled": False,
-                "verification_enabled": True,
-                "verification_timeout_seconds": 120,
-                "min_account_age_days": 0,
-                "new_member_restriction_minutes": 0,
-                "repeated_message_window_seconds": 60,
-                "repeated_message_limit": 3,
-                "mention_spam_limit": 6,
-                "max_message_length": 4000,
-                "warning_decay_enabled": True,
-                "warning_decay_days": 30,
-                "cleanup_max_age_days": 30,
-            }
-
-            await self._call(self.db.upsert, "ghostea_group_settings", defaults)
-            self._settings_cache[chat_id] = (time.monotonic() + self._cache_ttl, dict(defaults))
-            return defaults
+        await self._call(self.db.upsert, "ghostea_group_settings", defaults)
+        self._settings_cache[int(chat_id)] = (time.monotonic() + self._cache_ttl, dict(defaults))
+        return defaults
 
     async def update_settings(self, chat_id, changes):
         changes = dict(changes)

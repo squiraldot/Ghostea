@@ -925,25 +925,14 @@ dialog::backdrop{background:rgba(2,5,7,.76);backdrop-filter:blur(13px);-webkit-b
 </main>
 <script>
 const $=id=>document.getElementById(id); let selectedGroup=null; let settings=null; let selectionToken=0; let topics=[]; let selectedTopic=null; let selectedChatMeta=null; const topicSwitches=new Set(["abuse_filter_enabled","spam_filter_enabled","link_filter_enabled","flood_protection_enabled"]);
-const riskLevels={low:'Low',medium:'Medium',high:'High',critical:'Critical'}; const pendingUserActions=new Set();
+const riskLevels={low:'Low',medium:'Medium',high:'High',critical:'Critical'};
 const switchKeys=[['abuse_filter_enabled','Abuse'],['spam_filter_enabled','Spam'],['link_filter_enabled','Links'],['flood_protection_enabled','Flood'],['welcome_enabled','Welcome'],['antiraid_enabled','Anti-Raid'],['verification_enabled','Verification'],['warning_decay_enabled','Warning decay']];
 async function api(path,options={}){
-  const method=(options.method||'GET').toUpperCase();
-  const read=method==='GET';
-  const request=async()=>{
-    const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),20000);
-    try{return await fetch('/api/ghostea?path='+encodeURIComponent(path),{...options,signal:controller.signal,headers:{'Content-Type':'application/json',...(options.headers||{})}})}
-    finally{clearTimeout(timer)}
-  };
   let r;
-  try{r=await request();if(read&&[502,503,504].includes(r.status))r=await request()}
-  catch(e){throw new Error(e.name==='AbortError'?'Request timed out. Please try again.':'Network error. Check your connection.')}
+  try{r=await fetch('/api/ghostea?path='+encodeURIComponent(path),{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}})}
+  catch(e){throw new Error('Network error. Check your connection.')}
   let d={};try{d=await r.json()}catch{}
   if(r.status===401){showLogin();throw new Error('Session expired. Please sign in again.')}
-  if(r.status===403){throw new Error(d.error==='permission_denied'?'You do not have permission for this action.':(d.error||'Permission denied'))}
-  if(r.status===409){throw new Error(d.error||'Conflict. The current state changed; refresh and try again.')}
-  if(r.status===429){throw new Error('Too many requests. Please wait and try again.')}
   if(!r.ok)throw new Error(d.error||'Request failed');
   return d
 }
@@ -1079,20 +1068,15 @@ async function userAction(action){
   if(!selectedGroup){$('userMessage').textContent='Select a group first.';return}
   const id=$('userId').value.trim();
   if(!/^-?\d+$/.test(id)){ $('userMessage').textContent='Enter a numeric Telegram user ID.'; return }
-  const actionKey=selectedGroup+':'+id;
-  if(pendingUserActions.has(actionKey)){$('userMessage').textContent='Another action for this user is already running.';return}
   if((action==='ban') && !(await gxConfirm('Permanently ban this user?',{title:'Permanent ban',ok:'Ban user',danger:true})))return;
   if((action==='reset_warnings') && !(await gxConfirm('Reset all warnings for this user?',{title:'Reset warnings',ok:'Reset',danger:true})))return;
-  pendingUserActions.add(actionKey);
   try{
     const body={user_id:Number(id),action,reason:$('userReason').value.trim(),minutes:Number($('userMinutes').value||10)};
-    const result=await api('/api/groups/'+selectedGroup+'/users',{method:'POST',body:JSON.stringify(body)});
-    if(result.admin_action?.result==='punishment_failed') $('userMessage').textContent='⚠️ Warning recorded, but '+String(result.admin_action.action||'punishment')+' failed. Refresh/retry when bot permissions recover.';
-    else $('userMessage').textContent='✅ '+action+' completed';
+    await api('/api/groups/'+selectedGroup+'/users',{method:'POST',body:JSON.stringify(body)});
+    $('userMessage').textContent='✅ '+action+' completed';
     await loadUser();
     await loadGroups();
   }catch(e){$('userMessage').textContent='❌ '+e.message}
-  finally{pendingUserActions.delete(actionKey)}
 }
 
 </script>

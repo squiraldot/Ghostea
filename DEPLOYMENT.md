@@ -6,11 +6,6 @@ Push the complete repository. Never commit `.env`, BOT_TOKEN, SUPABASE_KEY or da
 ## 2. Supabase
 Create a project and run `database.sql` in SQL Editor.
 
-The current `database.sql` is designed to be safe for existing Ghostea databases,
-including pre-topic moderation logs and pre-warning-decay warning history.
-It adds legacy columns before creating indexes that reference them; this order
-is important for repeatable upgrades.
-
 The bot uses Supabase REST from Render. Set:
 - `SUPABASE_URL`
 - `SUPABASE_KEY` (server-side secret; preferably the project's service-role/server key)
@@ -35,8 +30,6 @@ Environment:
 `SUPABASE_KEY`
 `DASHBOARD_API_KEY`
 `DASHBOARD_ORIGIN`
-`GHOSTEA_ADMIN_PASSWORD` (needed to bootstrap the first dashboard Super Admin)
-`GHOSTEA_SUPERADMIN_USERNAME` (optional; defaults to `superadmin`)
 
 Render supplies `PORT`.
 
@@ -52,6 +45,7 @@ Deploy the `dashboard/` directory as the Vercel project root.
 Set these Vercel Environment Variables:
 - `GHOSTEA_API_URL` = Render service URL
 - `GHOSTEA_API_KEY` = same secret as Render `DASHBOARD_API_KEY`
+- `GHOSTEA_ADMIN_PASSWORD` = separate dashboard login password
 - `GHOSTEA_SESSION_SECRET` = long random secret
 
 The dashboard uses `/api/ghostea` as a server-side proxy, so the Render
@@ -74,6 +68,7 @@ The Vercel dashboard no longer sends the Render API key from browser JavaScript.
 Vercel server-side environment variables:
 - `GHOSTEA_API_URL`
 - `GHOSTEA_API_KEY`
+- `GHOSTEA_ADMIN_PASSWORD`
 - `GHOSTEA_SESSION_SECRET`
 
 The browser authenticates to the Vercel dashboard with the admin password.
@@ -323,88 +318,3 @@ calls or grant permissions. Deploy H01 with the existing Phase 20 configuration.
 H01 also corrects one Telegram contract mismatch in forum topic deletion:
 supergroup `deleteForumTopic` requires the bot's `can_delete_messages`
 administrator right. `can_manage_topics` alone is not sufficient.
-\n\n## Phase H05 — Telegram Error & Rate-Limit Layer\n\nGhostea now centralizes Telegram failure classification and bounded retry policy.\nSafe/idempotent Telegram reads may retry transient network/server/timeout/rate-limit\nfailures using `retry_after` when supplied. Destructive or non-idempotent actions\nremain single-attempt and return explicit H03 action outcomes; they are never blindly\nreplayed after a 429. Rate-limit cooldown state is scoped to the affected chat.\nForbidden/permission failures, bad requests, transient failures, and unknown errors\nremain distinguishable for recovery and observability.\n
-
-## Deployment repair — legacy topic_id error
-
-If Supabase reports `ERROR 42703: column "topic_id" does not exist` while
-running `database.sql`, the existing `ghostea_moderation_logs` table is from
-an older schema. Run `DATABASE_REPAIR_TOPIC_ID.sql` by itself once, then rerun
-the current `database.sql`.
-
-Do not delete the existing moderation table or its data.
-
-## Bootstrap-password behavior
-
-`GHOSTEA_ADMIN_PASSWORD` is required only when the database has no configured
-Super Admin for the selected `GHOSTEA_SUPERADMIN_USERNAME`. Existing
-database-backed admins can continue to authenticate after a Render restart
-without that bootstrap secret. For a fresh database, configure it before the
-first dashboard login.
-
-
-## Deployment topology and group-discovery repair
-
-Ghostea uses one Telegram polling worker on Render, Supabase as the durable
-database, and the Vercel dashboard as a proxy to the Render API. UptimeRobot
-may ping `/health` to prevent an idle Render service from sleeping; it must not
-run a second bot process.
-
-The bot now materializes `ghostea_group_settings` as soon as a supported chat
-is observed, before the administrator fast-path. The dashboard `/api/groups`
-is registry-first and also includes settings-only legacy rows. Existing
-databases are repaired by the `database.sql` backfill and by an idempotent
-startup reconciliation.
-
-A Telegram 409 `getUpdates` conflict can still occur for a short time while
-Render replaces an old instance during deployment. It is treated as a
-transient polling overlap and the polling loop reconnects. If 409s continue
-indefinitely, there is another live process using the same `BOT_TOKEN`; stop
-that process or service.
-
-
-## Deployment notes (current)
-- Telegram group discovery is triggered by `my_chat_member` lifecycle updates as well as messages, so Telegram privacy mode does not prevent dashboard discovery.
-- `ghostea_chat_registry` and `ghostea_group_settings` are reconciled automatically; `database.sql` is the single Supabase schema/migration file.
-- Render should have exactly one polling process using the bot token. A brief 409 during a deploy/restart can recover automatically; persistent 409 means another instance is still polling.
-- Vercel dashboard is pinned to Node 22.x to avoid deprecation warnings from older transitive runtime code.
-
-
-## Dashboard groups fix
-The `/api/groups` endpoint is registry-first and tolerant of partially upgraded legacy rows. Run the single `database.sql` in Supabase once after deploying this version. It also backfills missing group settings for discovered chats.
-
-## Telegram polling
-Ghostea uses one long-polling instance on Render. A brief Telegram `409 Conflict` during a Render deploy/restart can occur while the previous instance releases `getUpdates`; it should be followed by `200 OK`. Do not run the same bot token locally or on another host at the same time.
-
-
-## Telegram/Vercel deployment contract (2026)
-
-- Render is the only Telegram long-polling process.
-- Vercel only serves the dashboard/proxy and never calls Telegram `getUpdates`.
-- Telegram `getUpdates` supports one polling connection for a bot token. A `409 Conflict`
-  means another polling connection currently owns the queue. A short 409 during a Render
-  rolling restart can recover; a continuous 409 means another worker/service is using the
-  same token.
-- Ghostea uses the documented `my_chat_member` update to register a bot when it is added
-  to a group. It also registers groups from the first message/update received for that
-  group, so privacy mode does not block registration when a command is sent.
-- Telegram does not provide a "list every group this bot belongs to" Bot API method.
-  Therefore an already-existing group that was never stored must generate one update
-  (for example `/chatinfo` or another command/message) after this deployment.
-- Vercel dashboard uses Node.js 24.x. This is configured in `dashboard/package.json`.
-
-### Existing group bootstrap
-
-Telegram's Bot API does not expose a method to enumerate every group where a bot is
-currently a member. If a group was added before Ghostea's registry was fixed, Telegram
-will not retroactively send its old `my_chat_member` event. Send `/chatinfo` once in that
-group after deployment; the application now persists the group before the command handler
-runs. No database reset is required.
-
-
-## Critical existing-database migration note
-
-For an existing Ghostea database, run the complete `database.sql` from this release.
-The chat-registry migration is ordered so legacy `ghostea_chat_registry` tables are
-upgraded before any constraint or index references `chat_type`, `visibility`, or
-`is_forum`. Do not run an older `database.sql` from a previous ZIP.

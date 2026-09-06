@@ -8,7 +8,7 @@ from ghostea.handlers.common import require_admin
 from ghostea.services.chat_capabilities import resolve_bot_permissions
 from ghostea.services.chat_context import build_chat_context
 from ghostea.services.chat_visibility import resolve_chat_visibility
-from ghostea.services.production_readiness import compatibility_matrix, local_readiness, readiness_summary, compatibility_readiness
+from ghostea.services.production_readiness import compatibility_matrix, local_readiness, readiness_summary
 
 logger = logging.getLogger("Ghostea")
 
@@ -26,7 +26,6 @@ async def compatibility_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     caps = chat_context.capabilities
     visibility = resolve_chat_visibility(chat_context)
-    matrix_status = compatibility_readiness()
     lines = [
         "👻 Ghostea Compatibility",
         "",
@@ -43,12 +42,8 @@ async def compatibility_command(update: Update, context: ContextTypes.DEFAULT_TY
         lines.append(f"Private topic mode: {'Enabled' if private_topics else 'Disabled'}")
     elif caps.is_supergroup:
         try:
-            permission_service = context.application.bot_data.get("telegram_permissions")
-            if permission_service is not None:
-                permissions = await permission_service.bot_permissions(chat)
-            else:
-                me = await context.bot.get_me()
-                permissions = await resolve_bot_permissions(chat, me.id, raise_on_error=True)
+            me = await context.bot.get_me()
+            permissions = await resolve_bot_permissions(chat, me.id)
             lines.extend([
                 f"Bot admin: {'Yes' if permissions.is_admin else 'No'}",
                 f"Delete messages: {'Yes' if permissions.can_delete_messages else 'No'}",

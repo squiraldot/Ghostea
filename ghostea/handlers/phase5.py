@@ -23,22 +23,13 @@ async def reputation_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if update.message and update.message.reply_to_message:
-        reply = update.message.reply_to_message
-        # H06: a chat-backed sender (anonymous admin/channel) is not a human
-        # member identity. Do not dereference it or expose its reputation.
-        reply_target = getattr(reply, "from_user", None)
-        if getattr(reply, "sender_chat", None) is not None:
-            reply_target = None
-        if reply_target is not None and not getattr(reply_target, "is_bot", False):
-            target = reply_target
-            if target.id != update.effective_user.id:
-                try:
-                    if not await is_admin(chat, update.effective_user.id):
-                        target = update.effective_user
-                except Exception:
-                    # Authorization uncertainty must not grant access to
-                    # another member's private reputation.
+        target = update.message.reply_to_message.from_user
+        if target.id != update.effective_user.id:
+            try:
+                if not await is_admin(chat, update.effective_user.id):
                     target = update.effective_user
+            except Exception:
+                target = update.effective_user
 
     store = context.application.bot_data["phase3_store"]
     rep = await store.get_reputation(chat.id, target.id)
@@ -68,7 +59,7 @@ async def verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        await unmute_member(chat, user.id, permission_service=context.application.bot_data.get("telegram_permissions"))
+        await unmute_member(chat, user.id)
     except Exception:
         logger.exception("Could not restore verified member permissions")
         await query.answer("Verification succeeded, but permissions could not be restored. Please contact an admin.", show_alert=True)

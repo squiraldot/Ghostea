@@ -91,7 +91,7 @@ def visibility_from_registry(row) -> ChatVisibility:
     Username is normalized and only a supergroup can become publicly
     addressable. Stale `visibility=public` on a basic group is ignored.
     """
-    if not isinstance(row, dict):
+    if not row:
         return resolve_chat_visibility(None)
 
     chat_type = str(row.get("chat_type") or "")
