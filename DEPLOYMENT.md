@@ -400,3 +400,11 @@ currently a member. If a group was added before Ghostea's registry was fixed, Te
 will not retroactively send its old `my_chat_member` event. Send `/chatinfo` once in that
 group after deployment; the application now persists the group before the command handler
 runs. No database reset is required.
+
+
+## Critical existing-database migration note
+
+For an existing Ghostea database, run the complete `database.sql` from this release.
+The chat-registry migration is ordered so legacy `ghostea_chat_registry` tables are
+upgraded before any constraint or index references `chat_type`, `visibility`, or
+`is_forum`. Do not run an older `database.sql` from a previous ZIP.

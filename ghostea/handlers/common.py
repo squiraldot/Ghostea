@@ -62,12 +62,16 @@ async def chatinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_context = build_chat_context(
         chat, message, private_topics_enabled=private_topics_enabled
     )
+    registration_error = None
     if chat_context and chat_context.is_supported:
         try:
             store = context.application.bot_data.get("phase3_store")
             if store:
                 await store.touch_chat(chat_context)
-        except Exception:
+            else:
+                registration_error = "database_store_unavailable"
+        except Exception as exc:
+            registration_error = str(exc)
             logger.exception("Chat info registration failed: chat=%s", chat.id)
     if not chat_context:
         await message.reply_text("ℹ️ This chat type is not supported by Ghostea.")
@@ -86,6 +90,12 @@ async def chatinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(
             f"Private topic mode: {'Enabled' if private_topics_enabled else 'Disabled'}"
         )
+    if registration_error:
+        lines.append("")
+        lines.append("⚠️ Database registration failed. Check Render logs and Supabase schema.")
+    else:
+        lines.append("")
+        lines.append("✅ Registered in Ghostea dashboard.")
     await message.reply_text("\n".join(lines))
 
 

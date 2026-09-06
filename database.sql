@@ -17,14 +17,16 @@ end $$;
 -- Never expose that key in the Vercel browser bundle.
 
 -- Phase 1: canonical chat registry. One row per Telegram chat used by Ghostea.
--- This stores capabilities only; moderation settings remain group-scoped for now.
+-- This section is deliberately ordered for OLD databases too:
+-- 1) create the table when missing
+-- 2) add missing legacy columns
+-- 3) backfill/normalize legacy values
+-- 4) add constraints and indexes only after their columns exist
 create table if not exists ghostea_chat_registry (
     chat_id bigint primary key,
     chat_type text not null check (chat_type in ('group', 'supergroup')),
     title text,
     username text,
-    -- Telegram's public/private signal for group chats is the presence of a
-    -- public username. Basic groups cannot be assigned a public username.
     visibility text not null default 'private'
         check (visibility in ('private', 'public')),
     is_forum boolean not null default false,
@@ -33,27 +35,8 @@ create table if not exists ghostea_chat_registry (
     updated_at timestamptz not null default now()
 );
 
-create index if not exists idx_ghostea_chat_registry_forum
-    on ghostea_chat_registry (is_forum);
-
--- A basic Telegram group cannot be a Forum; forum is a supergroup
--- capability. Keep the invariant in the database as well as application code.
-do $$
-begin
-    if not exists (
-        select 1
-        from pg_constraint
-        where conname = 'ghostea_chat_registry_forum_supergroup_only'
-          and conrelid = 'ghostea_chat_registry'::regclass
-    ) then
-        alter table ghostea_chat_registry
-            add constraint ghostea_chat_registry_forum_supergroup_only
-            check (is_forum = false or chat_type = 'supergroup');
-    end if;
-end $$;
-
--- Safe upgrade for databases created by older Ghostea builds.
--- Keep the registry readable even when only chat_id existed previously.
+-- Safe upgrade for installations created by older Ghostea builds.
+-- Never reference a migration-added column until it has been added.
 alter table ghostea_chat_registry
     add column if not exists chat_type text;
 alter table ghostea_chat_registry
@@ -71,16 +54,32 @@ alter table ghostea_chat_registry
 alter table ghostea_chat_registry
     add column if not exists updated_at timestamptz not null default now();
 
--- Backfill any legacy rows before applying the canonical NOT NULL/check
--- constraints. A legacy registry row without a type is treated as a
--- supergroup because that is the dashboard's safest historical default.
+-- Backfill legacy rows before applying canonical constraints.
 update ghostea_chat_registry
 set chat_type = coalesce(nullif(chat_type, ''), 'supergroup')
 where chat_type is null or chat_type = '';
 
+update ghostea_chat_registry
+set visibility = case
+    when visibility in ('public', 'private') then visibility
+    else 'private'
+end
+where visibility is null or visibility not in ('public', 'private');
+
+update ghostea_chat_registry
+set is_forum = coalesce(is_forum, false)
+where is_forum is null;
+
 alter table ghostea_chat_registry
     alter column chat_type set not null;
 
+alter table ghostea_chat_registry
+    alter column visibility set not null;
+
+alter table ghostea_chat_registry
+    alter column is_forum set not null;
+
+-- Add constraints only after all referenced columns exist.
 do $$
 begin
     if not exists (
@@ -105,9 +104,26 @@ begin
     ) then
         alter table ghostea_chat_registry
             add constraint ghostea_chat_registry_visibility
-            check (visibility in ('private', 'public'));
+            check (visibility in ('public', 'private'));
     end if;
 end $$;
+
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'ghostea_chat_registry_forum_supergroup_only'
+          and conrelid = 'ghostea_chat_registry'::regclass
+    ) then
+        alter table ghostea_chat_registry
+            add constraint ghostea_chat_registry_forum_supergroup_only
+            check (is_forum = false or chat_type = 'supergroup');
+    end if;
+end $$;
+
+create index if not exists idx_ghostea_chat_registry_forum
+    on ghostea_chat_registry (is_forum);
 
 create index if not exists idx_ghostea_chat_registry_visibility
     on ghostea_chat_registry (visibility);
