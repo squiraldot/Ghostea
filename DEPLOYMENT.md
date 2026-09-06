@@ -35,6 +35,8 @@ Environment:
 `SUPABASE_KEY`
 `DASHBOARD_API_KEY`
 `DASHBOARD_ORIGIN`
+`GHOSTEA_ADMIN_PASSWORD` (needed to bootstrap the first dashboard Super Admin)
+`GHOSTEA_SUPERADMIN_USERNAME` (optional; defaults to `superadmin`)
 
 Render supplies `PORT`.
 
@@ -322,3 +324,20 @@ H01 also corrects one Telegram contract mismatch in forum topic deletion:
 supergroup `deleteForumTopic` requires the bot's `can_delete_messages`
 administrator right. `can_manage_topics` alone is not sufficient.
 \n\n## Phase H05 — Telegram Error & Rate-Limit Layer\n\nGhostea now centralizes Telegram failure classification and bounded retry policy.\nSafe/idempotent Telegram reads may retry transient network/server/timeout/rate-limit\nfailures using `retry_after` when supplied. Destructive or non-idempotent actions\nremain single-attempt and return explicit H03 action outcomes; they are never blindly\nreplayed after a 429. Rate-limit cooldown state is scoped to the affected chat.\nForbidden/permission failures, bad requests, transient failures, and unknown errors\nremain distinguishable for recovery and observability.\n
+
+## Deployment repair — legacy topic_id error
+
+If Supabase reports `ERROR 42703: column "topic_id" does not exist` while
+running `database.sql`, the existing `ghostea_moderation_logs` table is from
+an older schema. Run `DATABASE_REPAIR_TOPIC_ID.sql` by itself once, then rerun
+the current `database.sql`.
+
+Do not delete the existing moderation table or its data.
+
+## Bootstrap-password behavior
+
+`GHOSTEA_ADMIN_PASSWORD` is required only when the database has no configured
+Super Admin for the selected `GHOSTEA_SUPERADMIN_USERNAME`. Existing
+database-backed admins can continue to authenticate after a Render restart
+without that bootstrap secret. For a fresh database, configure it before the
+first dashboard login.

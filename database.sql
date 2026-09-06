@@ -1,5 +1,17 @@
 -- Ghostea database schema
 -- Run this once in Supabase SQL Editor.
+--
+-- Legacy deployment preflight: some older Ghostea installs created
+-- ghostea_moderation_logs before topic support. Ensure topic_id exists before
+-- ANY topic-aware index is attempted. This is intentionally idempotent.
+do $$
+begin
+    if to_regclass('public.ghostea_moderation_logs') is not null then
+        alter table public.ghostea_moderation_logs
+            add column if not exists topic_id bigint;
+    end if;
+end $$;
+
 -- The application uses the server-side SUPABASE_KEY only.
 -- Never expose that key in the Vercel browser bundle.
 

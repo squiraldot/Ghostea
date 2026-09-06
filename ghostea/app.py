@@ -94,9 +94,10 @@ def create_application():
         raise RuntimeError("DASHBOARD_API_KEY is required.")
     if not os.getenv("DASHBOARD_ORIGIN", "").strip():
         raise RuntimeError("DASHBOARD_ORIGIN is required.")
-    if not os.getenv("GHOSTEA_ADMIN_PASSWORD", "").strip():
-        raise RuntimeError("GHOSTEA_ADMIN_PASSWORD is required.")
-
+    # GHOSTEA_ADMIN_PASSWORD is only needed when AdminService must bootstrap
+    # the first dashboard Super Admin. Existing database-backed admins can
+    # authenticate without keeping the bootstrap secret in the environment.
+    # Keep the missing value visible through production-readiness diagnostics.
     readiness = readiness_summary(local_readiness())
     if not readiness["ready"]:
         logger.warning("Ghostea production readiness has failed checks: %s", readiness["checks"])
