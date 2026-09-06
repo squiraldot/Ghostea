@@ -10,6 +10,7 @@ from ghostea.config import (
     WELCOME_ENABLED_DEFAULT,
 )
 from ghostea.services.telegram_service import is_admin
+from ghostea.services.chat_context import build_chat_context
 from ghostea.utils import display_name
 
 logger = logging.getLogger("Ghostea")
@@ -18,11 +19,17 @@ logger = logging.getLogger("Ghostea")
 async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     chat = update.effective_chat
-    if not message or not chat or chat.type not in ("group", "supergroup"):
+    chat_context = build_chat_context(chat, message)
+    if not message or not chat_context:
         return
 
     store = context.application.bot_data["phase3_store"]
+    try:
+        await store.touch_chat(chat_context)
+    except Exception:
+        logger.exception("Chat registry update failed")
     protection = context.application.bot_data["protection"]
+    # Welcome, verification and anti-raid are chat-wide lifecycle services.
     settings = await store.get_settings(chat.id)
 
     from ghostea.handlers.phase5 import verification_for_member
@@ -35,6 +42,7 @@ async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await store.record_join(chat.id, member.id)
 
         if settings.get("antiraid_enabled", ANTIRAID_ENABLED_DEFAULT):
+            # Join-burst protection is always chat-wide, even in forums.
             triggered = protection.register_join(
                 chat.id,
                 member.id,
@@ -143,7 +151,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _admin(update):
-    if not update.effective_chat or not update.effective_user:
+    if not build_chat_context(update.effective_chat, update.effective_message) or not update.effective_user:
         return False
     try:
         return await is_admin(update.effective_chat, update.effective_user.id)

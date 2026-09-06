@@ -2,6 +2,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+import time
 
 
 class SupabaseREST:
@@ -41,19 +42,30 @@ class SupabaseREST:
             method=method,
         )
 
-        try:
-            with urllib.request.urlopen(req, timeout=15) as response:
-                raw = response.read().decode("utf-8")
-                if not raw:
-                    return []
-                return json.loads(raw)
-        except urllib.error.HTTPError as error:
-            details = error.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"Supabase HTTP {error.code}: {details}"
-            ) from error
-        except urllib.error.URLError as error:
-            raise RuntimeError(f"Supabase connection failed: {error}") from error
+        # Only retry idempotent reads. Retrying POST/PATCH could duplicate an
+        # insert when the server accepted it but the response was lost.
+        attempts = 3 if method.upper() == "GET" else 1
+        for attempt in range(attempts):
+            try:
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    raw = response.read().decode("utf-8")
+                    if not raw:
+                        return []
+                    return json.loads(raw)
+            except urllib.error.HTTPError as error:
+                transient = error.code == 429 or 500 <= error.code <= 599
+                if transient and attempt + 1 < attempts:
+                    time.sleep(0.25 * (2 ** attempt))
+                    continue
+                details = error.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"Supabase HTTP {error.code}: {details}"
+                ) from error
+            except (urllib.error.URLError, TimeoutError) as error:
+                if attempt + 1 < attempts:
+                    time.sleep(0.25 * (2 ** attempt))
+                    continue
+                raise RuntimeError(f"Supabase connection failed: {error}") from error
 
     def select(self, table, query):
         return self._request("GET", table, query=query)

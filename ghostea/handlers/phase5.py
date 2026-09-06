@@ -10,6 +10,7 @@ from ghostea.config import (
     VERIFICATION_TIMEOUT_SECONDS,
 )
 from ghostea.services.telegram_service import is_admin, mute_member, unmute_member
+from ghostea.services.chat_context import build_chat_context
 from ghostea.utils import display_name
 
 logger = logging.getLogger("Ghostea")
@@ -22,13 +23,22 @@ async def reputation_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if update.message and update.message.reply_to_message:
-        target = update.message.reply_to_message.from_user
-        if target.id != update.effective_user.id:
-            try:
-                if not await is_admin(chat, update.effective_user.id):
+        reply = update.message.reply_to_message
+        # H06: a chat-backed sender (anonymous admin/channel) is not a human
+        # member identity. Do not dereference it or expose its reputation.
+        reply_target = getattr(reply, "from_user", None)
+        if getattr(reply, "sender_chat", None) is not None:
+            reply_target = None
+        if reply_target is not None and not getattr(reply_target, "is_bot", False):
+            target = reply_target
+            if target.id != update.effective_user.id:
+                try:
+                    if not await is_admin(chat, update.effective_user.id):
+                        target = update.effective_user
+                except Exception:
+                    # Authorization uncertainty must not grant access to
+                    # another member's private reputation.
                     target = update.effective_user
-            except Exception:
-                target = update.effective_user
 
     store = context.application.bot_data["phase3_store"]
     rep = await store.get_reputation(chat.id, target.id)
@@ -58,7 +68,7 @@ async def verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        await unmute_member(chat, user.id)
+        await unmute_member(chat, user.id, permission_service=context.application.bot_data.get("telegram_permissions"))
     except Exception:
         logger.exception("Could not restore verified member permissions")
         await query.answer("Verification succeeded, but permissions could not be restored. Please contact an admin.", show_alert=True)
@@ -85,6 +95,21 @@ async def verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def verification_for_member(chat, member, context):
     store = context.application.bot_data["phase3_store"]
+    chat_context = build_chat_context(chat)
+    if not chat_context:
+        return
+
+    # Verification requires an individual member restriction. Telegram's Bot
+    # API only exposes restrictChatMember for supergroups, so a basic group
+    # must not create a challenge that Ghostea cannot enforce.
+    if not chat_context.capabilities.supports_member_restriction:
+        logger.info(
+            "Skipping verification in basic group: chat=%s user=%s",
+            chat.id,
+            member.id,
+        )
+        return
+
     settings = await store.get_settings(chat.id)
 
     if not settings.get("verification_enabled", VERIFICATION_ENABLED_DEFAULT):
@@ -187,7 +212,7 @@ async def setmaxmsg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _admin(update):
-    if not update.effective_chat or not update.effective_user:
+    if not build_chat_context(update.effective_chat, update.effective_message) or not update.effective_user:
         return False
     try:
         return await is_admin(update.effective_chat, update.effective_user.id)

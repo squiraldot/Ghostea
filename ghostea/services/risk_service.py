@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 
 class RiskService:
+    SCOPE = "topic_aware_events_chat_wide_member_state"
+
     """
     Read-only moderation risk intelligence built from existing warning/log data.
 
@@ -89,7 +91,7 @@ class RiskService:
         # Half-life of seven days.
         return 0.5 ** (age_days / 7.0)
 
-    async def report(self, chat_id, days=7, limit=20):
+    async def report(self, chat_id, days=7, limit=20, topic_id=None):
         days = max(1, min(int(days), 90))
         limit = max(1, min(int(limit), 50))
         since = (
@@ -101,17 +103,20 @@ class RiskService:
         # the query narrow is important for groups with tens of thousands of
         # members.
         errors = []
+        log_query = {
+            "chat_id": f"eq.{chat_id}",
+            "created_at": f"gte.{since}",
+            "select": "user_id,topic_id,action,reason,details,created_at",
+            "order": "created_at.desc",
+            "limit": "1000",
+        }
+        if topic_id is not None:
+            log_query["topic_id"] = f"eq.{int(topic_id)}"
         try:
             logs = await self.store._call(
                 self.store.db.select,
                 "ghostea_moderation_logs",
-                {
-                    "chat_id": f"eq.{chat_id}",
-                    "created_at": f"gte.{since}",
-                    "select": "user_id,action,reason,details,created_at",
-                    "order": "created_at.desc",
-                    "limit": "1000",
-                },
+                log_query,
             )
         except Exception:
             logger = __import__("logging").getLogger("Ghostea")
@@ -222,24 +227,30 @@ class RiskService:
             "partial": bool(errors),
             "failed_sources": errors,
             "sample_cap": 2000,
+            "topic_id": int(topic_id) if topic_id is not None else None,
+            "topic_scope": "moderation_events_only" if topic_id is not None else "chat",
+            "warning_scope": "chat",
         }
 
-    async def user(self, chat_id, user_id, days=30):
+    async def user(self, chat_id, user_id, days=30, topic_id=None):
         """Calculate risk directly for one user, without the top-user cap."""
         days = max(1, min(int(days), 90))
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         now = datetime.now(timezone.utc)
+        user_log_query = {
+            "chat_id": f"eq.{chat_id}",
+            "user_id": f"eq.{int(user_id)}",
+            "created_at": f"gte.{since}",
+            "select": "user_id,topic_id,action,reason,details,created_at",
+            "order": "created_at.desc",
+            "limit": "1000",
+        }
+        if topic_id is not None:
+            user_log_query["topic_id"] = f"eq.{int(topic_id)}"
         logs = await self.store._call(
             self.store.db.select,
             "ghostea_moderation_logs",
-            {
-                "chat_id": f"eq.{chat_id}",
-                "user_id": f"eq.{int(user_id)}",
-                "created_at": f"gte.{since}",
-                "select": "user_id,action,reason,details,created_at",
-                "order": "created_at.desc",
-                "limit": "1000",
-            },
+            user_log_query,
         )
         warnings = await self.store._call(
             self.store.db.select,
@@ -292,5 +303,8 @@ class RiskService:
             "warnings": warning_count,
             "categories": dict(categories),
             "last_activity": last_activity,
+            "topic_id": int(topic_id) if topic_id is not None else None,
+            "topic_scope": "moderation_events_only" if topic_id is not None else "chat",
+            "warning_scope": "chat",
         }
 

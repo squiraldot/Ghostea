@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes
 
 from ghostea.services.export_service import to_csv, to_json
 from ghostea.services.telegram_service import is_admin
+from ghostea.services.chat_context import build_chat_context
 
 logger = logging.getLogger("Ghostea")
 
@@ -21,14 +22,17 @@ async def analytics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             days = 7
 
+    chat_context = build_chat_context(update.effective_chat, update.effective_message)
     report = await context.application.bot_data["analytics"].report(
-        update.effective_chat.id, days
+        update.effective_chat.id, days,
+        topic_id=chat_context.topic_id if chat_context else None,
     )
 
     lines = [
         "📊 Ghostea Analytics",
         "",
-        f"Period: {report['days']} day(s)",
+        f"Period: {report['days']} day(s)"
+        + (f" • Topic: {report['topic_id']}" if report.get("topic_id") is not None else ""),
         f"👋 Joins: {report['joins']}",
         f"⚠️ Warnings: {report['warnings']}",
         f"🛡️ Actions: {report['actions']}",
@@ -55,8 +59,10 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         days = 7
 
+    chat_context = build_chat_context(update.effective_chat, update.effective_message)
     report = await context.application.bot_data["analytics"].report(
-        update.effective_chat.id, days
+        update.effective_chat.id, days,
+        topic_id=chat_context.topic_id if chat_context else None,
     )
 
     if fmt == "json":
@@ -109,7 +115,7 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _admin(update):
-    if not update.effective_chat or not update.effective_user:
+    if not build_chat_context(update.effective_chat, update.effective_message) or not update.effective_user:
         return False
     try:
         return await is_admin(update.effective_chat, update.effective_user.id)

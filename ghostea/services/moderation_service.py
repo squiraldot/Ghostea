@@ -5,6 +5,8 @@ from ghostea.services.telegram_service import muted_permissions
 
 
 class ModerationService:
+    SCOPE = "chat_wide_state"
+
     """Legacy-compatible moderation service using the current defaults."""
 
     def __init__(self, warning_store):

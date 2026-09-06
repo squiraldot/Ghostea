@@ -3,21 +3,31 @@ from datetime import datetime, timezone
 from telegram import ChatMember
 from telegram.constants import ChatMemberStatus
 
+from ghostea.services.chat_context import build_chat_context
 from ghostea.services.telegram_service import (
     ban_member,
     mute_member,
     unban_member,
     unmute_member,
     is_admin,
+    perform_ban_member, perform_mute_member, perform_unban_member, perform_unmute_member,
 )
 
 
 class UserManagementService:
-    """Administrative user-management operations for one Telegram group."""
+    SCOPE = "chat_wide"
 
-    def __init__(self, store, bot):
+    """Administrative user-management operations for one Telegram chat.
+
+    User state and administrative actions are chat-wide. A forum topic may be
+    the place where a command was issued, but it never changes the target's
+    membership, warnings, mute, ban, or reputation scope.
+    """
+
+    def __init__(self, store, bot, permission_service=None):
         self.store = store
         self.bot = bot
+        self.permission_service = permission_service
 
     async def profile(self, chat_id, user_id):
         data = await self.store.get_user_profile(chat_id, user_id)
@@ -51,7 +61,9 @@ class UserManagementService:
         # transient API failure must never become permission to moderate an
         # unknown account that could be an administrator.
         try:
-            member = await self.bot.get_chat_member(chat_id, target_user_id)
+            member = await self.permission_service.member(
+                await self.bot.get_chat(chat_id), target_user_id
+            ) if self.permission_service is not None else await self.bot.get_chat_member(chat_id, target_user_id)
         except Exception:
             return False, "target_lookup_failed"
 
@@ -76,12 +88,19 @@ class UserManagementService:
             chat_id, target_user_id, admin_user_id, "WARN",
             f"reason={reason};count={count};action={action}",
         )
-        return await self.profile(chat_id, target_user_id)
+        profile = await self.profile(chat_id, target_user_id)
+        profile["admin_action"] = {
+            "requested": "warn",
+            "warning_count": count,
+            "result": "success" if not str(action).endswith("_failed") else "punishment_failed",
+            "action": action,
+        }
+        return profile
 
     async def _warning_for_member(self, chat_id, user, reason):
         # Keep the same warning policy as Telegram /warn.
         from ghostea.services.phase3_moderation import Phase3ModerationService
-        service = Phase3ModerationService(self.store)
+        service = Phase3ModerationService(self.store, self.bot, self.permission_service)
         # A lightweight chat adapter is unnecessary: the bot's Chat object
         # provides the same moderation methods required by the service.
         chat = await self.bot.get_chat(chat_id)
@@ -116,10 +135,10 @@ class UserManagementService:
         if not allowed:
             raise PermissionError(error)
         chat = await self.bot.get_chat(chat_id)
-        await ban_member(chat, target_user_id)
-        await self.store.log(
-            chat_id, target_user_id, "BAN", "Dashboard ban", ""
-        )
+        result = await perform_ban_member(chat, target_user_id, self.permission_service)
+        if not result.ok:
+            raise PermissionError(f"ban_failed:{result.status.value}")
+        await self.store.log(chat_id, target_user_id, "BAN", "Dashboard ban", "")
         await self.store.log_user_admin_action(
             chat_id, target_user_id, admin_user_id, "BAN"
         )
@@ -127,25 +146,29 @@ class UserManagementService:
 
     async def unban(self, chat_id, target_user_id, admin_user_id):
         chat = await self.bot.get_chat(chat_id)
-        await unban_member(chat, target_user_id)
-        await self.store.log(
-            chat_id, target_user_id, "UNBAN", "Dashboard unban", ""
-        )
+        result = await perform_unban_member(chat, target_user_id, self.permission_service)
+        if not result.ok:
+            raise PermissionError(f"unban_failed:{result.status.value}")
+        await self.store.log(chat_id, target_user_id, "UNBAN", "Dashboard unban", "")
         await self.store.log_user_admin_action(
             chat_id, target_user_id, admin_user_id, "UNBAN"
         )
         return await self.profile(chat_id, target_user_id)
 
     async def mute(self, chat_id, target_user_id, admin_user_id, minutes):
+        chat = await self.bot.get_chat(chat_id)
+        chat_context = build_chat_context(chat)
+        capabilities = chat_context.capabilities if chat_context else None
+        if not capabilities or not capabilities.supports_member_restriction:
+            raise PermissionError("member_restriction_not_supported_for_basic_group")
         allowed, error = await self._guard_target(chat_id, target_user_id)
         if not allowed:
             raise PermissionError(error)
-        chat = await self.bot.get_chat(chat_id)
-        await mute_member(chat, target_user_id, minutes)
-        await self.store.log(
-            chat_id, target_user_id, "MUTE", "Dashboard mute",
-            f"minutes={minutes}",
-        )
+        result = await perform_mute_member(chat, target_user_id, minutes, self.permission_service)
+        if not result.ok:
+            raise PermissionError(f"mute_failed:{result.status.value}")
+        await self.store.log(chat_id, target_user_id, "MUTE", "Dashboard mute",
+                             f"minutes={minutes}")
         await self.store.log_user_admin_action(
             chat_id, target_user_id, admin_user_id, "MUTE",
             f"minutes={minutes}",
@@ -153,14 +176,18 @@ class UserManagementService:
         return await self.profile(chat_id, target_user_id)
 
     async def unmute(self, chat_id, target_user_id, admin_user_id):
+        chat = await self.bot.get_chat(chat_id)
+        chat_context = build_chat_context(chat)
+        capabilities = chat_context.capabilities if chat_context else None
+        if not capabilities or not capabilities.supports_member_restriction:
+            raise PermissionError("member_restriction_not_supported_for_basic_group")
         allowed, error = await self._guard_target(chat_id, target_user_id)
         if not allowed:
             raise PermissionError(error)
-        chat = await self.bot.get_chat(chat_id)
-        await unmute_member(chat, target_user_id)
-        await self.store.log(
-            chat_id, target_user_id, "UNMUTE", "Dashboard unmute", ""
-        )
+        result = await perform_unmute_member(chat, target_user_id, self.permission_service)
+        if not result.ok:
+            raise PermissionError(f"unmute_failed:{result.status.value}")
+        await self.store.log(chat_id, target_user_id, "UNMUTE", "Dashboard unmute", "")
         await self.store.log_user_admin_action(
             chat_id, target_user_id, admin_user_id, "UNMUTE"
         )

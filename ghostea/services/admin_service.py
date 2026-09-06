@@ -49,6 +49,8 @@ def _verify_password(password, encoded):
 
 
 class AdminService:
+    SCOPE = "chat_wide"
+
     """Database-backed dashboard admins with role-based authorization."""
 
     def __init__(self, store):
@@ -123,11 +125,21 @@ class AdminService:
 
     @staticmethod
     def public(admin):
+        if not isinstance(admin, dict):
+            return None
+        try:
+            admin_id = int(admin["id"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None
+        role = str(admin.get("role") or "")
+        username = str(admin.get("username") or "").strip().lower()
+        if not username or role not in ROLES:
+            return None
         return {
-            "id": int(admin["id"]),
-            "username": admin["username"],
-            "display_name": admin.get("display_name") or admin["username"],
-            "role": admin["role"],
+            "id": admin_id,
+            "username": username,
+            "display_name": admin.get("display_name") or username,
+            "role": role,
             "enabled": bool(admin.get("enabled", True)),
             "created_at": admin.get("created_at"),
             "last_login_at": admin.get("last_login_at"),

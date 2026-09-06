@@ -13,7 +13,28 @@ class Detection:
     source: str
 
 
+@dataclass(frozen=True)
+class ModerationContext:
+    """Request-local identity used by the moderation engine.
+
+    The moderation decision remains independent from Telegram's Update object.
+    ``scope_key`` is ``(chat_id, topic_id)`` for forum-aware protections and
+    ``(chat_id, None)`` for ordinary groups/supergroups.
+    """
+    chat_id: int
+    user_id: int
+    topic_id: Optional[int] = None
+    chat_type: Optional[str] = None
+    is_forum: bool = False
+
+    @property
+    def scope_key(self):
+        return (int(self.chat_id), self.topic_id)
+
+
 class ModerationEngine:
+    SCOPE = "topic_aware"
+
     """
     Central decision layer for message content.
 
@@ -94,8 +115,23 @@ class ModerationEngine:
         custom_words,
         custom_domains,
         custom_patterns,
+        moderation_context: Optional[ModerationContext] = None,
     ) -> Optional[Detection]:
+        """Evaluate one message using explicit request context.
+
+        ``moderation_context`` is the preferred API. The old private settings
+        identifiers remain as a compatibility fallback for callers outside
+        the message handler during a rolling deployment.
+        """
         detections = []
+        if moderation_context is not None:
+            context_chat_id = int(moderation_context.chat_id)
+            context_user_id = int(moderation_context.user_id)
+            context_scope_key = moderation_context.scope_key
+        else:
+            context_chat_id = int(settings.get("_chat_id"))
+            context_user_id = int(settings.get("_user_id"))
+            context_scope_key = settings.get("_scope_key")
 
         max_length = int(settings.get("max_message_length", 4000))
         if len(text) > max_length:
@@ -123,11 +159,12 @@ class ModerationEngine:
 
         if self.protection.register_repeated_message(
             # These values are supplied by evaluate's caller through settings.
-            int(settings["_chat_id"]),
-            int(settings["_user_id"]),
+            context_chat_id,
+            context_user_id,
             text,
             int(settings.get("repeated_message_window_seconds", 60)),
             int(settings.get("repeated_message_limit", 3)),
+            scope_key=context_scope_key,
         ):
             detections.append(
                 Detection(

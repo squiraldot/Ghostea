@@ -91,7 +91,11 @@ function parseBody(req) {
 
 export default async function handler(req, res) {
   const target = secret("GHOSTEA_API_URL").replace(/\/+$/, "");
-  if (!target || !secret("GHOSTEA_API_KEY")) {
+  if (
+    !target ||
+    !secret("GHOSTEA_API_KEY") ||
+    !secret("GHOSTEA_SESSION_SECRET")
+  ) {
     return json(res, 500, { error: "server_not_configured" });
   }
 
@@ -162,6 +166,8 @@ export default async function handler(req, res) {
 
   const pathname = parsedPath.pathname;
   const match = pathname.match(/^\/api\/groups\/(-?\d+)\/(settings|analytics|logs|filters|risk)$/);
+  const topics = pathname.match(/^\/api\/groups\/(-?\d+)\/topics$/);
+  const topicSettings = pathname.match(/^\/api\/groups\/(-?\d+)\/topics\/(-?\d+)\/settings$/);
   const filterDelete = pathname.match(/^\/api\/groups\/(-?\d+)\/filters\/(\d+)$/);
   const userProfile = pathname.match(/^\/api\/groups\/(-?\d+)\/users\/(-?\d+)\/profile$/);
   const userList = pathname.match(/^\/api\/groups\/(-?\d+)\/users$/);
@@ -169,14 +175,14 @@ export default async function handler(req, res) {
   const authMe = pathname === "/api/auth/me";
   const admins = pathname === "/api/auth/admins";
   const adminItem = pathname.match(/^\/api\/auth\/admins\/(\d+)$/);
-  const allowed = ALLOWED_GET.has(pathname) || Boolean(match) || Boolean(filterDelete) || Boolean(userProfile) || Boolean(userList) || Boolean(userAction) || authMe || admins || Boolean(adminItem);
+  const allowed = ALLOWED_GET.has(pathname) || Boolean(match) || Boolean(topics) || Boolean(topicSettings) || Boolean(filterDelete) || Boolean(userProfile) || Boolean(userList) || Boolean(userAction) || authMe || admins || Boolean(adminItem);
   if (!allowed) return json(res, 404, { error: "not_found" });
 
   if (!["GET", "PATCH", "POST", "DELETE"].includes(req.method)) {
     return json(res, 405, { error: "method_not_allowed" });
   }
 
-  if (req.method === "PATCH" && !(match && pathname.endsWith("/settings")) && !adminItem) {
+  if (req.method === "PATCH" && !(match && pathname.endsWith("/settings")) && !topicSettings && !adminItem) {
     return json(res, 405, { error: "method_not_allowed" });
   }
   if (req.method === "POST" && !((match && pathname.endsWith("/filters")) || userAction || admins)) {
@@ -214,13 +220,38 @@ export default async function handler(req, res) {
     headers["Content-Type"] = "application/json";
   }
 
+  const isRead = req.method === "GET";
+  const requestId = crypto.randomUUID();
+  headers["X-Ghostea-Request-Id"] = requestId;
+
+  async function callUpstream() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      return await fetch(url, {
+        method: req.method,
+        headers,
+        body,
+        redirect: "error",
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   try {
-    const upstream = await fetch(url, {
-      method: req.method,
-      headers,
-      body,
-      redirect: "error",
-    });
+    let upstream;
+    try {
+      upstream = await callUpstream();
+    } catch (error) {
+      // Only GETs are safe to retry. Never replay dashboard mutations.
+      if (!isRead) throw error;
+      upstream = await callUpstream();
+    }
+    if (isRead && [502, 503, 504].includes(upstream.status)) {
+      upstream = await callUpstream();
+    }
 
     const text = await upstream.text();
     let payload;
@@ -230,6 +261,7 @@ export default async function handler(req, res) {
     return json(res, upstream.status, payload, {
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
+      "X-Ghostea-Request-Id": requestId,
     });
   } catch {
     return json(res, 502, { error: "ghostea_unreachable" });

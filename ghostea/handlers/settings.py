@@ -5,6 +5,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ghostea.services.telegram_service import is_admin
+from ghostea.services.chat_context import build_chat_context
 from ghostea.utils import target_from_update, display_name
 
 logger = logging.getLogger("Ghostea")
@@ -13,7 +14,7 @@ logger = logging.getLogger("Ghostea")
 async def _admin(update):
     chat = update.effective_chat
     user = update.effective_user
-    if not chat or not user or chat.type not in ("group", "supergroup"):
+    if not build_chat_context(chat) or not user:
         return False
     try:
         return await is_admin(chat, user.id)
@@ -215,7 +216,12 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     store = context.application.bot_data["phase3_store"]
-    rows = await store.recent_logs(update.effective_chat.id, 15)
+    chat_context = build_chat_context(update.effective_chat, update.effective_message)
+    rows = await store.recent_logs(
+        update.effective_chat.id,
+        15,
+        topic_id=chat_context.topic_id if chat_context else None,
+    )
 
     if not rows:
         await update.effective_message.reply_text("📋 No moderation logs yet.")
@@ -226,6 +232,7 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(
             f"{row['action']} • user={row.get('user_id')} • "
             f"{row.get('reason') or '-'}"
+            + (f" • topic={row.get('topic_id')}" if row.get("topic_id") is not None else "")
         )
 
     await update.effective_message.reply_text("\n".join(lines))

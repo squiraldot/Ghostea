@@ -3,9 +3,14 @@ from datetime import datetime, timedelta, timezone
 
 
 class VerificationService:
+    SCOPE = "chat_wide"
+
     """
     Simple button-based verification challenge.
     A random token is generated server-side and stored in Supabase.
+
+    Verification is chat-wide member state. Forum topic context is never used
+    for the verification record, so changing topics cannot bypass a challenge.
     """
 
     def __init__(self, store):
