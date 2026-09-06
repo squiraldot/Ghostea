@@ -343,34 +343,51 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 cached = self._cached_json(cache_key)
                 if cached is not None:
                     return _json(self, 200, cached)
-                rows = self._call_sync(
-                    self.store.db.select,
-                    "ghostea_group_settings",
-                    {"select": "*", "order": "updated_at.desc", "limit": "200"},
-                )
-                # Phase 8 dashboard needs chat capabilities alongside settings.
-                # Registry is additive; if an older deployment has not populated
-                # it yet, settings-only rows remain fully usable.
+
+                # The registry is the authoritative discovery source: a chat
+                # can exist there even if settings were not materialized by an
+                # older bot version. Settings are then overlaid when present.
                 try:
                     registry = self._call_sync(
                         self.store.db.select,
                         "ghostea_chat_registry",
-                        {"select": "chat_id,chat_type,title,username,visibility,is_forum", "limit": "200"},
+                        {
+                            "select": "chat_id,chat_type,title,username,visibility,is_forum,updated_at,last_seen_at",
+                            "order": "updated_at.desc",
+                            "limit": "200",
+                        },
+                    )
+                except Exception as exc:
+                    logger.exception("Group registry query failed")
+                    return _json(self, 503, {"error": "group_registry_unavailable"})
+
+                try:
+                    settings_rows = self._call_sync(
+                        self.store.db.select,
+                        "ghostea_group_settings",
+                        {"select": "*", "limit": "200"},
                     )
                 except Exception:
-                    registry = []
-                meta = {str(r.get("chat_id")): r for r in registry}
+                    # Preserve registry visibility even if an older database
+                    # lacks settings rows or the settings query is transiently
+                    # unavailable.
+                    logger.exception("Group settings query failed")
+                    settings_rows = []
+
+                settings_by_chat = {
+                    str(r.get("chat_id")): r for r in settings_rows
+                }
                 merged = []
-                for row in rows:
-                    item = dict(row)
-                    info = meta.get(str(row.get("chat_id")))
-                    if info:
-                        for key in ("chat_type", "title", "username", "visibility", "is_forum"):
-                            item[key] = info.get(key)
-                    else:
-                        item.setdefault("chat_type", "supergroup")
-                        item.setdefault("visibility", "private")
-                        item.setdefault("is_forum", False)
+
+                # Registry-first means administrator-only activity and legacy
+                # installations are still visible in the dashboard.
+                for info in registry:
+                    chat_key = str(info.get("chat_id"))
+                    item = dict(settings_by_chat.get(chat_key, {}))
+                    item["chat_id"] = info.get("chat_id")
+                    for key in ("chat_type", "title", "username", "visibility", "is_forum"):
+                        item[key] = info.get(key)
+
                     registry_row = {
                         "chat_id": item.get("chat_id"),
                         "chat_type": item.get("chat_type"),
@@ -389,8 +406,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     item["capabilities"] = caps.as_dict()
                     item["forum_compatibility"] = resolve_forum_compatibility(caps).as_dict()
                     merged.append(item)
-                return _json(self, 200, self._put_cache(cache_key, {"groups": merged}))
 
+                # Backward compatibility: settings-only rows created by old
+                # versions must remain visible until the registry is populated.
+                registry_ids = {str(r.get("chat_id")) for r in registry}
+                for row in settings_rows:
+                    if str(row.get("chat_id")) in registry_ids:
+                        continue
+                    item = dict(row)
+                    item.setdefault("chat_type", "supergroup")
+                    item.setdefault("visibility", "private")
+                    item.setdefault("is_forum", False)
+                    registry_row = {
+                        "chat_id": item.get("chat_id"),
+                        "chat_type": item.get("chat_type"),
+                        "title": item.get("title"),
+                        "username": item.get("username"),
+                        "visibility": item.get("visibility"),
+                        "is_forum": item.get("is_forum"),
+                    }
+                    caps = capabilities_from_registry(registry_row)
+                    visibility = visibility_from_registry(registry_row)
+                    item["visibility"] = visibility.visibility
+                    item["username"] = visibility.username
+                    item["public_url"] = visibility.public_url
+                    item["access_label"] = visibility.access_label
+                    item["visibility_info"] = visibility.as_dict()
+                    item["capabilities"] = caps.as_dict()
+                    item["forum_compatibility"] = resolve_forum_compatibility(caps).as_dict()
+                    merged.append(item)
+
+                return _json(self, 200, self._put_cache(cache_key, {"groups": merged}))
             if path.startswith("/api/groups/") and path.endswith("/topics"):
                 if not self._require_read(): return
                 parts = path.split("/")

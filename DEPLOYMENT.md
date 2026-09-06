@@ -341,3 +341,23 @@ Super Admin for the selected `GHOSTEA_SUPERADMIN_USERNAME`. Existing
 database-backed admins can continue to authenticate after a Render restart
 without that bootstrap secret. For a fresh database, configure it before the
 first dashboard login.
+
+
+## Deployment topology and group-discovery repair
+
+Ghostea uses one Telegram polling worker on Render, Supabase as the durable
+database, and the Vercel dashboard as a proxy to the Render API. UptimeRobot
+may ping `/health` to prevent an idle Render service from sleeping; it must not
+run a second bot process.
+
+The bot now materializes `ghostea_group_settings` as soon as a supported chat
+is observed, before the administrator fast-path. The dashboard `/api/groups`
+is registry-first and also includes settings-only legacy rows. Existing
+databases are repaired by the `database.sql` backfill and by an idempotent
+startup reconciliation.
+
+A Telegram 409 `getUpdates` conflict can still occur for a short time while
+Render replaces an old instance during deployment. It is treated as a
+transient polling overlap and the polling loop reconnects. If 409s continue
+indefinitely, there is another live process using the same `BOT_TOKEN`; stop
+that process or service.

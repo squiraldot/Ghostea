@@ -121,6 +121,13 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await store.touch_chat(chat_context)
     except Exception:
         logger.exception("Chat registry update failed")
+        # Do not continue under an unknown persistence state. The dashboard
+        # and moderation configuration rely on the same durable chat record.
+        return
+
+    # touch_chat() now also materializes default group settings. This happens
+    # before the admin fast-path so administrator-only activity still makes
+    # the group visible/configurable in the dashboard.
 
     # Phase 3: persist forum-topic metadata independently from moderation.
     # This runs before the text check so Telegram topic service messages

@@ -1,5 +1,6 @@
 -- Ghostea database schema
--- Run this once in Supabase SQL Editor.
+-- Single-file Supabase schema + safe upgrade/migration script.
+-- Run the ENTIRE file in Supabase SQL Editor. It is idempotent and safe to re-run.
 --
 -- Legacy deployment preflight: some older Ghostea installs created
 -- ghostea_moderation_logs before topic support. Ensure topic_id exists before
@@ -149,6 +150,16 @@ create table if not exists ghostea_group_settings (
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
+
+-- ============================================================
+-- Deployment repair — materialize settings for every discovered chat
+-- ============================================================
+-- Older Ghostea builds registered chats in ghostea_chat_registry before
+-- get_settings() was reached. The dashboard must not lose those groups.
+insert into ghostea_group_settings (chat_id)
+select r.chat_id
+from ghostea_chat_registry r
+on conflict (chat_id) do nothing;
 
 create table if not exists ghostea_warnings (
     chat_id bigint not null,

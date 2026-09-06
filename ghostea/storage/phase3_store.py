@@ -112,6 +112,11 @@ class Phase3Store:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
+            # Materialize settings first so the registry remains the final
+            # write for compatibility with lightweight store adapters/tests.
+            # More importantly, this closes the administrator-first-message
+            # gap where registry existed but settings did not.
+            await self.get_settings(chat_id)
             return await self._call(self.db.upsert, "ghostea_chat_registry", row)
         except Exception:
             self._chat_touch.pop(chat_id, None)

@@ -133,6 +133,28 @@ def create_application():
         except Exception:
             logger.exception("Warning migration failed")
 
+        # Reconcile legacy installations where chats were registered but
+        # group settings were never materialized (notably when the first
+        # observed message was from an administrator). This is idempotent.
+        try:
+            registry_rows = await store._call(
+                store.db.select,
+                "ghostea_chat_registry",
+                {"select": "chat_id", "limit": "500"},
+            )
+            reconciled = 0
+            for row in registry_rows:
+                if row.get("chat_id") is None:
+                    continue
+                await store.get_settings(int(row["chat_id"]))
+                reconciled += 1
+            if reconciled:
+                logger.info("Reconciled group settings for %s registered chats.", reconciled)
+        except Exception:
+            # Startup should remain observable and fail closed only for
+            # genuinely unavailable core dependencies.
+            logger.exception("Legacy group-settings reconciliation failed")
+
         # Bot API 9.3: private-chat forum topic mode is a bot-account setting.
         try:
             me = await telegram_error_policy.call_read(application.bot.get_me)
@@ -364,7 +386,18 @@ def create_application():
     )
 
     async def error_handler(update, context):
-        logger.error("Unhandled bot error: %s", context.error, exc_info=True)
+        error = context.error
+        # Telegram returns 409 when another polling connection briefly owns
+        # getUpdates (commonly during a Render deploy/restart overlap). The
+        # polling loop reconnects and the next getUpdates succeeds; do not
+        # misclassify this transient condition as an unhandled bot failure.
+        if error and "terminated by other getUpdates request" in str(error):
+            logger.warning(
+                "Telegram polling conflict detected; another bot instance "
+                "briefly owned getUpdates. The polling loop will reconnect."
+            )
+            return
+        logger.error("Unhandled bot error: %s", error, exc_info=True)
 
     application.add_error_handler(error_handler)
     return application
