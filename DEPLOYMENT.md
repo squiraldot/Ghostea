@@ -361,3 +361,10 @@ Render replaces an old instance during deployment. It is treated as a
 transient polling overlap and the polling loop reconnects. If 409s continue
 indefinitely, there is another live process using the same `BOT_TOKEN`; stop
 that process or service.
+
+
+## Deployment notes (current)
+- Telegram group discovery is triggered by `my_chat_member` lifecycle updates as well as messages, so Telegram privacy mode does not prevent dashboard discovery.
+- `ghostea_chat_registry` and `ghostea_group_settings` are reconciled automatically; `database.sql` is the single Supabase schema/migration file.
+- Render should have exactly one polling process using the bot token. A brief 409 during a deploy/restart can recover automatically; persistent 409 means another instance is still polling.
+- Vercel dashboard is pinned to Node 22.x to avoid deprecation warnings from older transitive runtime code.

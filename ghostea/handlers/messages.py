@@ -1,5 +1,7 @@
 import logging
 
+logger = logging.getLogger("Ghostea")
+
 from telegram import Update
 from telegram.ext import ContextTypes
 

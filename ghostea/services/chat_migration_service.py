@@ -237,6 +237,10 @@ class ChatMigrationService:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         await self.store._call(self.store.db.upsert, "ghostea_chat_registry", row)
+        # Settings are required for dashboard configuration. Materialize them
+        # from lifecycle events too, because privacy-mode groups may never
+        # deliver a normal message to the bot.
+        await self.store.get_settings(chat_id)
 
         changed = (
             not previous
