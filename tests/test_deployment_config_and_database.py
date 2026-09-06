@@ -21,7 +21,7 @@ def test_legacy_warning_history_column_is_added_before_indexes():
 def test_legacy_moderation_topic_column_is_added_before_topic_indexes():
     sql = _read("database.sql")
     alter = sql.index(
-        "alter table ghostea_moderation_logs\n  add column if not exists topic_id"
+        "alter table if exists ghostea_moderation_logs\n  add column if not exists topic_id"
     )
     topic_index = sql.index("idx_ghostea_moderation_logs_chat_topic_time")
     topic_user_index = sql.index("idx_ghostea_moderation_logs_chat_topic_user_time")
@@ -55,3 +55,21 @@ def test_env_example_does_not_mislabel_render_bootstrap_secrets_as_vercel():
     vercel_section = env.split("# Render only", 1)[0]
     assert "GHOSTEA_SUPERADMIN_USERNAME" not in vercel_section
     assert "GHOSTEA_ADMIN_PASSWORD" not in vercel_section
+
+
+def test_moderation_log_topic_column_migration_is_legacy_safe():
+    sql = _read("database.sql")
+    assert "alter table if exists ghostea_moderation_logs" in sql
+    alter = sql.index(
+        "alter table if exists ghostea_moderation_logs\n  add column if not exists topic_id"
+    )
+    topic_index = sql.index("idx_ghostea_moderation_logs_chat_topic_time")
+    assert alter < topic_index
+
+
+def test_ptb_lifecycle_handlers_use_type_handler_not_removed_status_filters():
+    app = _read("ghostea/app.py")
+    assert "TypeHandler(Update, _handle_my_chat_member_update)" in app
+    assert "TypeHandler(Update, _handle_chat_member_update)" in app
+    assert "filters.StatusUpdate.MY_CHAT_MEMBER" not in app
+    assert "filters.StatusUpdate.CHAT_MEMBER" not in app

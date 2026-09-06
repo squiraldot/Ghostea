@@ -329,12 +329,24 @@ def create_application():
 
 
     # H02 — live permission/membership cache invalidation.
+    # NOTE: these are top-level Telegram Update fields, not Message status
+    # updates. PTB 22.x does not expose them through StatusUpdate filters.
+    # TypeHandler keeps lifecycle coverage without breaking startup.
     from ghostea.handlers.permission_events import handle_my_chat_member, handle_chat_member
+
+    async def _handle_my_chat_member_update(update, context):
+        if getattr(update, "my_chat_member", None) is not None:
+            await handle_my_chat_member(update, context)
+
+    async def _handle_chat_member_update(update, context):
+        if getattr(update, "chat_member", None) is not None:
+            await handle_chat_member(update, context)
+
     application.add_handler(
-        MessageHandler(filters.StatusUpdate.MY_CHAT_MEMBER, handle_my_chat_member)
+        TypeHandler(Update, _handle_my_chat_member_update)
     )
     application.add_handler(
-        MessageHandler(filters.StatusUpdate.CHAT_MEMBER, handle_chat_member)
+        TypeHandler(Update, _handle_chat_member_update)
     )
     # H04 — edited messages are a distinct Telegram update family. Register
     # before the generic message handler so edited text/captions are evaluated

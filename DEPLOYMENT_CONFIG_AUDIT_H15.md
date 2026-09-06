@@ -44,3 +44,13 @@ credentials.
 ## Validation
 The source test suite passes after these changes. No new runtime dependency
 or database migration was introduced.
+
+
+## Deployment hotfix — H15 runtime compatibility
+
+- Fixed a Python Telegram Bot 22.x startup crash caused by registering
+  `my_chat_member`/`chat_member` as `filters.StatusUpdate.*`.
+- These are top-level `Update` families in PTB 22.x and are now dispatched
+  through `TypeHandler(Update, ...)` wrappers with explicit field guards.
+- Hardened the moderation-log migration with `ALTER TABLE IF EXISTS`.
+- The `topic_id` migration remains before every topic-related index.
