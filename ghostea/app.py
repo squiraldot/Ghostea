@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     TypeHandler,
@@ -329,10 +330,10 @@ def create_application():
     # H02 — live permission/membership cache invalidation.
     from ghostea.handlers.permission_events import handle_my_chat_member, handle_chat_member
     application.add_handler(
-        MessageHandler(filters.StatusUpdate.MY_CHAT_MEMBER, handle_my_chat_member)
+        ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
     )
     application.add_handler(
-        MessageHandler(filters.StatusUpdate.CHAT_MEMBER, handle_chat_member)
+        ChatMemberHandler(handle_chat_member, ChatMemberHandler.CHAT_MEMBER)
     )
     # H04 — edited messages are a distinct Telegram update family. Register
     # before the generic message handler so edited text/captions are evaluated
