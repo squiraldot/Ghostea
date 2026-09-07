@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<meta name="theme-color" content="#0b0d10">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
 <title>Ghostea Admin</title>
 
 <style>
@@ -1211,6 +1212,365 @@ dialog::backdrop,.gx-dialog-backdrop{
 @media(prefers-reduced-motion:reduce){
   *,*:before,*:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}
 }
+
+/* ============================================================
+   GHOSTEA RESPONSIVE STRUCTURE v2
+   Desktop / Tablet / Mobile are intentionally different shells.
+   UI-only: no data/API/application behavior changes.
+   ============================================================ */
+
+:root{
+  --shell-max: 1600px;
+  --shell-gutter: 28px;
+  --sidebar-w: 248px;
+  --content-gap: 24px;
+  --section-gap: 18px;
+  --control-h: 42px;
+}
+
+/* Base alignment contract */
+html,body{width:100%;min-width:320px}
+body{overflow-x:hidden}
+main{
+  width:100%;
+  max-width:var(--shell-max);
+  margin:0 auto;
+  padding:0 var(--shell-gutter) 48px;
+}
+#app{width:100%;min-width:0}
+#app>.topbar{
+  width:calc(100% + (var(--shell-gutter) * 2));
+  margin-left:calc(var(--shell-gutter) * -1);
+  margin-right:calc(var(--shell-gutter) * -1);
+  padding-left:var(--shell-gutter);
+  padding-right:var(--shell-gutter);
+}
+.layout{
+  width:100%;
+  display:grid;
+  grid-template-columns:var(--sidebar-w) minmax(0,1fr);
+  gap:var(--content-gap);
+  align-items:start;
+}
+.sidebar{
+  width:100%;
+  min-width:0;
+  position:sticky;
+  top:76px;
+  max-height:calc(100svh - 96px);
+  overflow:auto;
+}
+.content{
+  min-width:0;
+  width:100%;
+}
+.content > .section{width:100%}
+.content > .section > .card{width:100%;min-width:0}
+.card{min-width:0}
+.section-title{min-width:0}
+.section-title h2,.section-title h3{min-width:0}
+.section-title>.row{min-width:0}
+.row{min-width:0}
+.field{min-width:0}
+.grid2,.grid3,.stats{min-width:0}
+.setting{min-width:0}
+.table-wrap,.scroll{max-width:100%}
+
+/* Desktop: spacious two-column admin workspace */
+@media (min-width:1200px){
+  #app>.topbar{min-height:72px}
+  .topbar .brand h1{font-size:20px}
+  .topbar .brand p{font-size:11px}
+  .sidebar{padding:10px}
+  .sidebar .navbtn{min-height:44px}
+  .content{max-width:none}
+  .section{padding-bottom:2px}
+  .hero-card{padding:24px}
+  .stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .grid2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  #settings .grid3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  #users .grid3{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+
+/* Tablet: icon rail + wider content canvas.
+   This is deliberately not a scaled-down desktop. */
+@media (min-width:721px) and (max-width:1199px){
+  :root{
+    --shell-gutter:20px;
+    --sidebar-w:76px;
+    --content-gap:18px;
+  }
+  main{padding-bottom:36px}
+  #app>.topbar{
+    min-height:64px;
+    padding-top:10px;
+    padding-bottom:10px;
+  }
+  .topbar .brand h1{font-size:18px}
+  .topbar .brand p{display:none}
+  .topbar .brand-mark{width:36px;height:36px}
+  .topbar-actions{gap:7px}
+  .topbar-action{min-width:40px!important;width:40px!important;padding:8px!important}
+  .topbar-action span{display:none!important}
+  #status{max-width:150px;overflow:hidden;text-overflow:ellipsis}
+  .layout{grid-template-columns:76px minmax(0,1fr)}
+  .sidebar{
+    top:78px;
+    padding:8px;
+    border-radius:16px;
+  }
+  .sidebar:before{display:none}
+  .sidebar .navbtn{
+    width:100%;
+    min-height:48px;
+    justify-content:center;
+    padding:10px 6px!important;
+    margin:3px 0!important;
+  }
+  .sidebar .nav-label{display:none!important}
+  .sidebar .nav-icon,.sidebar .nav-icon svg{width:20px;height:20px}
+  .sidebar .navbtn.active{box-shadow:inset 2px 0 0 var(--gx-accent, var(--accent))}
+  .content{max-width:none}
+  .section-title{align-items:center}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .grid2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid3{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #settings .grid3{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #users .grid3{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #users .grid3 .field:last-child{grid-column:1/-1}
+  .table{min-width:680px}
+}
+
+/* Mobile: compact header + persistent horizontal navigation.
+   No desktop sidebar is squeezed into the phone. */
+@media (max-width:720px){
+  :root{
+    --shell-gutter:12px;
+    --content-gap:0;
+    --section-gap:12px;
+  }
+  html{scroll-padding-top:120px}
+  body{font-size:13px}
+  main{
+    max-width:none;
+    padding:0 var(--shell-gutter) 88px;
+  }
+  #app>.topbar{
+    position:sticky;
+    top:0;
+    z-index:100;
+    width:calc(100% + (var(--shell-gutter) * 2));
+    margin-left:calc(var(--shell-gutter) * -1);
+    margin-right:calc(var(--shell-gutter) * -1);
+    min-height:58px;
+    padding:8px var(--shell-gutter);
+    border-radius:0;
+    border-bottom:1px solid rgba(255,255,255,.08);
+    background:rgba(0,0,0,.94);
+    backdrop-filter:blur(20px);
+    -webkit-backdrop-filter:blur(20px);
+  }
+  .topbar{gap:10px}
+  .topbar .brand{gap:9px}
+  .topbar .brand-mark{width:34px;height:34px;border-radius:9px}
+  .topbar .brand h1{font-size:17px;letter-spacing:-.03em}
+  .topbar .brand p{display:none}
+  .topbar-actions{gap:5px}
+  .topbar-action{
+    min-width:36px!important;
+    width:36px!important;
+    height:36px;
+    min-height:36px!important;
+    padding:8px!important;
+    border-radius:9px!important;
+  }
+  .topbar-action span{display:none!important}
+  #status{
+    max-width:34px;
+    width:34px;
+    height:34px;
+    padding:0!important;
+    justify-content:center;
+    font-size:0!important;
+    border-radius:9px!important;
+  }
+  #status:before{
+    content:"";
+    width:7px;height:7px;border-radius:50%;
+    background:currentColor;
+    box-shadow:0 0 0 4px rgba(255,255,255,.04);
+  }
+
+  .layout{
+    display:block;
+    width:100%;
+  }
+
+  /* Horizontal, always-visible mobile IA */
+  .sidebar{
+    position:sticky;
+    top:58px;
+    z-index:90;
+    width:calc(100% + 0px);
+    height:auto;
+    max-height:none;
+    overflow-x:auto;
+    overflow-y:hidden;
+    display:flex;
+    align-items:center;
+    gap:5px;
+    padding:7px;
+    margin:0 0 12px;
+    border-radius:0 0 12px 12px;
+    border-top:0;
+    background:rgba(0,0,0,.94);
+    box-shadow:0 8px 24px rgba(0,0,0,.22);
+    scrollbar-width:none;
+  }
+  .sidebar::-webkit-scrollbar{display:none}
+  .sidebar:before{display:none}
+  .sidebar .navbtn{
+    flex:0 0 auto!important;
+    width:auto!important;
+    min-width:max-content!important;
+    min-height:38px!important;
+    height:38px!important;
+    margin:0!important;
+    padding:0 11px!important;
+    display:inline-flex!important;
+    align-items:center;
+    justify-content:center;
+    gap:7px;
+    border-radius:9px!important;
+    white-space:nowrap;
+    font-size:10px;
+  }
+  .sidebar .nav-label{
+    display:block!important;
+    max-width:none!important;
+    font-size:10px!important;
+    line-height:1;
+  }
+  .sidebar .nav-icon,.sidebar .nav-icon svg{
+    width:17px!important;height:17px!important;
+  }
+  .sidebar .navbtn.active{
+    box-shadow:inset 0 -2px 0 var(--gx-accent, var(--accent))!important;
+  }
+
+  .content{width:100%;max-width:none}
+  #topicContextBar{
+    position:sticky;
+    top:108px;
+    z-index:80;
+    margin:0 0 12px!important;
+  }
+  .topic-context{
+    padding:8px 10px!important;
+    gap:7px!important;
+    border-radius:10px!important;
+  }
+  .topic-context select{flex:1 1 150px;min-width:0}
+  .topic-context .badge{max-width:120px;overflow:hidden;text-overflow:ellipsis}
+
+  .section{padding:0!important}
+  .section-title{
+    flex-direction:column;
+    align-items:stretch!important;
+    gap:10px!important;
+    margin-bottom:13px!important;
+  }
+  .section-title>.row{
+    width:100%;
+    display:flex;
+    align-items:center;
+    justify-content:flex-start!important;
+    gap:7px;
+    flex-wrap:wrap;
+  }
+  .section-title>.row button,
+  .section-title>.row select{flex:1 1 auto}
+  .card{
+    padding:14px!important;
+    border-radius:13px!important;
+  }
+  .hero-card{padding:15px!important}
+  .stats{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+    gap:8px!important;
+  }
+  .stat{padding:13px!important;border-radius:11px!important}
+  .stat strong{font-size:21px!important}
+  .stat span{font-size:9px!important}
+  .grid2,.grid3{
+    grid-template-columns:1fr!important;
+    gap:10px!important;
+  }
+  #settings .grid3,#users .grid3{
+    grid-template-columns:1fr!important;
+  }
+  .field{width:100%;min-width:0!important}
+  input,select,button{min-height:42px}
+  .action-row{gap:6px}
+  .action-row button{flex:1 1 calc(50% - 6px)}
+  .table-wrap,.scroll{
+    width:100%;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    border-radius:10px;
+  }
+  .table{
+    min-width:640px;
+    font-size:11px;
+  }
+  .table th,.table td{padding:10px 9px}
+  .setting{padding:13px!important;border-radius:11px!important}
+  .setting .row{flex-wrap:wrap}
+  .notice{padding:11px 12px}
+  .login{
+    width:min(100%,420px);
+    margin:clamp(20px,12vh,72px) auto;
+  }
+}
+
+/* Small phones: preserve tap targets while tightening density */
+@media (max-width:420px){
+  main{padding-left:9px;padding-right:9px}
+  #app>.topbar{
+    width:calc(100% + 18px);
+    margin-left:-9px;margin-right:-9px;
+    padding-left:9px;padding-right:9px;
+  }
+  .sidebar{margin-left:0;margin-right:0}
+  .sidebar .navbtn{padding:0 9px!important}
+  .sidebar .nav-label{font-size:9px!important}
+  .section-title h2{font-size:18px}
+  .stats{gap:6px!important}
+  .stat{padding:11px!important}
+  .stat strong{font-size:19px!important}
+  .stat span{font-size:9px!important}
+  .section-title>.row button,.section-title>.row select{
+    flex:1 1 100%;
+  }
+}
+
+/* Landscape phones: use the extra horizontal room for navigation */
+@media (max-width:720px) and (orientation:landscape){
+  .sidebar{top:58px}
+  .sidebar .navbtn{min-height:36px!important;height:36px!important}
+  .content{padding-top:2px}
+}
+
+/* Accessibility / motion */
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto!important}
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    transition-duration:.01ms!important;
+  }
+}
+
 </style>
 
 </head>
