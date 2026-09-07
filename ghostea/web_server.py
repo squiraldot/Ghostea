@@ -8,7 +8,11 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from ghostea.services.chat_capabilities import capabilities_from_registry, resolve_forum_compatibility
+from ghostea.services.chat_capabilities import (
+    capabilities_from_registry,
+    resolve_forum_compatibility,
+)
+from ghostea.services.chat_visibility import visibility_from_registry
 
 
 MAX_BODY_BYTES = 32 * 1024
