@@ -216,13 +216,38 @@ export default async function handler(req, res) {
     headers["Content-Type"] = "application/json";
   }
 
+  const isRead = req.method === "GET";
+  const requestId = crypto.randomUUID();
+  headers["X-Ghostea-Request-Id"] = requestId;
+
+  async function callUpstream() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      return await fetch(url, {
+        method: req.method,
+        headers,
+        body,
+        redirect: "error",
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   try {
-    const upstream = await fetch(url, {
-      method: req.method,
-      headers,
-      body,
-      redirect: "error",
-    });
+    let upstream;
+    try {
+      upstream = await callUpstream();
+    } catch (error) {
+      // Only GETs are safe to retry. Never replay dashboard mutations.
+      if (!isRead) throw error;
+      upstream = await callUpstream();
+    }
+    if (isRead && [502, 503, 504].includes(upstream.status)) {
+      upstream = await callUpstream();
+    }
 
     const text = await upstream.text();
     let payload;
@@ -232,6 +257,7 @@ export default async function handler(req, res) {
     return json(res, upstream.status, payload, {
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
+      "X-Ghostea-Request-Id": requestId,
     });
   } catch {
     return json(res, 502, { error: "ghostea_unreachable" });

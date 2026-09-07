@@ -24,9 +24,10 @@ class ForumTopicError(RuntimeError):
 
 
 class ForumTopicService:
-    def __init__(self, store, bot):
+    def __init__(self, store, bot, permission_service=None):
         self.store = store
         self.bot = bot
+        self.permission_service = permission_service
 
     async def _private_topics_enabled(self):
         try:
@@ -63,13 +64,16 @@ class ForumTopicService:
             return context, caps, profile
 
         try:
-            me = await self.bot.get_me()
-            permissions = await resolve_bot_permissions(chat, me.id)
+            if self.permission_service is not None:
+                permissions = await self.permission_service.require_bot(chat, "manage_topics")
+            else:
+                me = await self.bot.get_me()
+                permissions = await resolve_bot_permissions(chat, me.id, raise_on_error=True)
+        except PermissionError as exc:
+            raise ForumTopicError("Ghostea needs the Manage Topics admin permission in this forum.") from exc
         except Exception as exc:
             logger.exception("Forum permission lookup failed")
             raise ForumTopicError("Could not verify the bot's topic-management permission.") from exc
-        if not permissions.is_admin or not permissions.can_manage_topics:
-            raise ForumTopicError("Ghostea needs the Manage Topics admin permission in this forum.")
         return context, caps, profile
 
     @staticmethod
@@ -90,6 +94,42 @@ class ForumTopicService:
         if len(title) > MAX_TOPIC_TITLE_LENGTH:
             raise ForumTopicError("Topic name must be 128 characters or fewer.")
         return title
+
+    @staticmethod
+    def _topic_lifecycle_failure(error):
+        """Return True only for errors that strongly indicate the topic is gone.
+
+        Bot API does not expose a dedicated forum-topic-deleted update. For
+        operations against a known topic, Telegram can instead reject the
+        topic id. Only definitive topic-id/not-found errors retire local state;
+        permission, transient, and generic bad-request errors never do.
+        """
+        text = str(error or "").upper()
+        markers = (
+            "TOPIC_ID_INVALID",
+            "MESSAGE_THREAD_NOT_FOUND",
+            "TOPIC_NOT_FOUND",
+            "FORUM_TOPIC_NOT_FOUND",
+            "MESSAGE_THREAD_ID_INVALID",
+        )
+        return any(marker in text for marker in markers)
+
+    async def _mark_topic_stale(self, chat_id, topic_id, reason=None):
+        current = await self.store.get_topic(chat_id, topic_id)
+        await self.store.upsert_topic_lifecycle(
+            chat_id,
+            topic_id,
+            name=(current or {}).get("name"),
+            is_active=False,
+            is_closed=True,
+            is_hidden=False,
+        )
+        logger.info(
+            "Retired stale forum topic %s/%s%s",
+            int(chat_id),
+            int(topic_id),
+            f" reason={reason}" if reason else "",
+        )
 
     @staticmethod
     def topic_id_from_update(update, private_topics_enabled=False):
@@ -127,12 +167,17 @@ class ForumTopicService:
         await self._require_manage_topics(chat)
         topic_id = self._validate_topic_id(topic_id)
         title = self._validate_title(title)
-        if topic_id == GENERAL_TOPIC_ID and getattr(chat, "type", None) != "private":
-            await self.bot.edit_general_forum_topic(chat_id=chat.id, name=title)
-        else:
-            await self.bot.edit_forum_topic(
-                chat_id=chat.id, message_thread_id=topic_id, name=title
-            )
+        try:
+            if topic_id == GENERAL_TOPIC_ID and getattr(chat, "type", None) != "private":
+                await self.bot.edit_general_forum_topic(chat_id=chat.id, name=title)
+            else:
+                await self.bot.edit_forum_topic(
+                    chat_id=chat.id, message_thread_id=topic_id, name=title
+                )
+        except Exception as error:
+            if self._topic_lifecycle_failure(error) and topic_id != GENERAL_TOPIC_ID:
+                await self._mark_topic_stale(chat.id, topic_id, str(error))
+            raise
         await self.store.upsert_topic_lifecycle(
             chat.id, topic_id, name=title, is_active=True, is_closed=False
         )
@@ -143,12 +188,17 @@ class ForumTopicService:
         if getattr(chat, "type", None) == "private":
             raise ForumTopicError("Closing topics is not available in private chats through the Telegram Bot API.")
         topic_id = self._validate_topic_id(topic_id)
-        if topic_id == GENERAL_TOPIC_ID and getattr(chat, "type", None) != "private":
-            await self.bot.close_general_forum_topic(chat_id=chat.id)
-        else:
-            await self.bot.close_forum_topic(
-                chat_id=chat.id, message_thread_id=topic_id
-            )
+        try:
+            if topic_id == GENERAL_TOPIC_ID and getattr(chat, "type", None) != "private":
+                await self.bot.close_general_forum_topic(chat_id=chat.id)
+            else:
+                await self.bot.close_forum_topic(
+                    chat_id=chat.id, message_thread_id=topic_id
+                )
+        except Exception as error:
+            if self._topic_lifecycle_failure(error) and topic_id != GENERAL_TOPIC_ID:
+                await self._mark_topic_stale(chat.id, topic_id, str(error))
+            raise
         current = await self.store.get_topic(chat.id, topic_id)
         await self.store.upsert_topic_lifecycle(
             chat.id, topic_id, name=(current or {}).get("name"),
@@ -161,12 +211,17 @@ class ForumTopicService:
         if getattr(chat, "type", None) == "private":
             raise ForumTopicError("Reopening topics is not available in private chats through the Telegram Bot API.")
         topic_id = self._validate_topic_id(topic_id)
-        if topic_id == GENERAL_TOPIC_ID and getattr(chat, "type", None) != "private":
-            await self.bot.reopen_general_forum_topic(chat_id=chat.id)
-        else:
-            await self.bot.reopen_forum_topic(
-                chat_id=chat.id, message_thread_id=topic_id
-            )
+        try:
+            if topic_id == GENERAL_TOPIC_ID and getattr(chat, "type", None) != "private":
+                await self.bot.reopen_general_forum_topic(chat_id=chat.id)
+            else:
+                await self.bot.reopen_forum_topic(
+                    chat_id=chat.id, message_thread_id=topic_id
+                )
+        except Exception as error:
+            if self._topic_lifecycle_failure(error) and topic_id != GENERAL_TOPIC_ID:
+                await self._mark_topic_stale(chat.id, topic_id, str(error))
+            raise
         current = await self.store.get_topic(chat.id, topic_id)
         await self.store.upsert_topic_lifecycle(
             chat.id, topic_id, name=(current or {}).get("name"),
@@ -185,14 +240,16 @@ class ForumTopicService:
             return context, caps, profile
 
         try:
-            me = await self.bot.get_me()
-            permissions = await resolve_bot_permissions(chat, me.id)
+            if self.permission_service is not None:
+                permissions = await self.permission_service.require_bot(chat, "delete_message")
+            else:
+                me = await self.bot.get_me()
+                permissions = await resolve_bot_permissions(chat, me.id, raise_on_error=True)
+        except PermissionError as exc:
+            raise ForumTopicError("Ghostea needs the Delete Messages admin permission to delete a forum topic.") from exc
         except Exception as exc:
             logger.exception("Forum delete permission lookup failed")
             raise ForumTopicError("Could not verify the bot's message-deletion permission.") from exc
-
-        if not permissions.is_admin or not permissions.can_delete_messages:
-            raise ForumTopicError("Ghostea needs the Delete Messages admin permission to delete a forum topic.")
         return context, caps, profile
 
     async def delete_topic(self, chat, topic_id):
@@ -200,9 +257,14 @@ class ForumTopicService:
         topic_id = self._validate_topic_id(topic_id)
         if topic_id == GENERAL_TOPIC_ID and getattr(chat, "type", None) != "private":
             raise ForumTopicError("The General topic cannot be deleted.")
-        await self.bot.delete_forum_topic(
-            chat_id=chat.id, message_thread_id=topic_id
-        )
+        try:
+            await self.bot.delete_forum_topic(
+                chat_id=chat.id, message_thread_id=topic_id
+            )
+        except Exception as error:
+            if self._topic_lifecycle_failure(error):
+                await self._mark_topic_stale(chat.id, topic_id, str(error))
+            raise
         current = await self.store.get_topic(chat.id, topic_id)
         await self.store.upsert_topic_lifecycle(
             chat.id, topic_id, name=(current or {}).get("name"),

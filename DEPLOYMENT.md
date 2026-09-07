@@ -318,3 +318,4 @@ calls or grant permissions. Deploy H01 with the existing Phase 20 configuration.
 H01 also corrects one Telegram contract mismatch in forum topic deletion:
 supergroup `deleteForumTopic` requires the bot's `can_delete_messages`
 administrator right. `can_manage_topics` alone is not sufficient.
+\n\n## Phase H05 — Telegram Error & Rate-Limit Layer\n\nGhostea now centralizes Telegram failure classification and bounded retry policy.\nSafe/idempotent Telegram reads may retry transient network/server/timeout/rate-limit\nfailures using `retry_after` when supplied. Destructive or non-idempotent actions\nremain single-attempt and return explicit H03 action outcomes; they are never blindly\nreplayed after a 429. Rate-limit cooldown state is scoped to the affected chat.\nForbidden/permission failures, bad requests, transient failures, and unknown errors\nremain distinguishable for recovery and observability.\n

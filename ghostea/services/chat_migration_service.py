@@ -34,8 +34,78 @@ CHAT_SCOPED_TABLES = (
 
 
 class ChatMigrationService:
-    def __init__(self, store):
+    def __init__(self, store, bot=None, permission_service=None):
         self.store = store
+        self.bot = bot
+        self.permission_service = permission_service
+
+    def attach_runtime(self, bot=None, permission_service=None):
+        if bot is not None:
+            self.bot = bot
+        if permission_service is not None:
+            self.permission_service = permission_service
+
+    async def reconcile_telegram_chat(self, chat_id, reason="lifecycle"):
+        """Fetch Telegram's current chat identity and reconcile local state.
+
+        Telegram is authoritative for the current chat type, username and forum
+        state. This method intentionally does not infer state from migration
+        messages alone.
+        """
+        if self.bot is None:
+            raise RuntimeError("migration service bot is not attached")
+        from ghostea.services.chat_context import build_chat_context
+        from ghostea.services.telegram_resilience import TelegramErrorPolicy
+
+        policy = TelegramErrorPolicy()
+        chat = await policy.call_read(
+            lambda: self.bot.get_chat(int(chat_id)),
+            scope_id=int(chat_id),
+        )
+        context = build_chat_context(chat)
+        if context is None:
+            raise RuntimeError(f"unsupported Telegram chat type for {chat_id}")
+        if context.chat_type != "supergroup":
+            raise RuntimeError(
+                f"migration target {chat_id} is not a Telegram supergroup"
+            )
+        result = await self.reconcile_chat(context, reason=reason)
+
+        # A migration/lifecycle transition invalidates all cached Telegram
+        # authorization state. The next operation must observe the new chat.
+        if self.permission_service is not None:
+            self.permission_service.invalidate_chat(int(chat_id))
+        return result, chat
+
+    async def handle_migration(self, old_chat_id, new_chat_id, *, reason="telegram_migration"):
+        """Run migration, then verify the new Telegram identity.
+
+        Completion is reported only after local migration and an authoritative
+        Telegram chat refresh both succeed. If the refresh is temporarily
+        unavailable, the durable migration remains resumable but is not
+        represented as a verified lifecycle transition.
+        """
+        old_chat_id = int(old_chat_id)
+        new_chat_id = int(new_chat_id)
+        result = await self.migrate(old_chat_id, new_chat_id)
+        if self.permission_service is not None:
+            self.permission_service.invalidate_chat(old_chat_id)
+            self.permission_service.invalidate_chat(new_chat_id)
+
+        reconciled, chat = await self.reconcile_telegram_chat(
+            new_chat_id, reason=reason
+        )
+        # The source id is no longer an operational chat identity after a
+        # successful Telegram migration.
+        if self.permission_service is not None:
+            self.permission_service.invalidate_chat(old_chat_id)
+        return {
+            "migration": result,
+            "reconciliation": reconciled,
+            "chat_type": getattr(chat, "type", None),
+            "is_forum": bool(getattr(chat, "is_forum", False)),
+            "username": getattr(chat, "username", None),
+        }
 
     async def _rows(self, table, chat_id):
         return await self.store._call(

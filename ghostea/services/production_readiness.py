@@ -14,6 +14,9 @@ from ghostea.services.chat_capabilities import resolve_chat_capabilities
 from ghostea.services.chat_visibility import resolve_chat_visibility
 from ghostea.services.chat_context import ChatContext
 from ghostea.services.telegram_contract import TELEGRAM_CONTRACT
+from ghostea.services.compatibility_matrix import build_matrix, validate_matrix, matrix_summary
+from ghostea.services.adversarial_regression import run_adversarial_regression
+from ghostea.services.input_boundary import run_input_boundary_regression
 
 
 REQUIRED_ENV = ("BOT_TOKEN", "SUPABASE_URL", "SUPABASE_KEY", "DASHBOARD_API_KEY", "DASHBOARD_ORIGIN")
@@ -52,6 +55,30 @@ def local_readiness(base_dir=None):
             f"Bot API {TELEGRAM_CONTRACT.bot_api_baseline}; python-telegram-bot major {TELEGRAM_CONTRACT.ptb_major}",
         )
     )
+    matrix_errors = validate_matrix(build_matrix())
+    checks.append(
+        ReadinessCheck(
+            "telegram_compatibility_matrix",
+            not matrix_errors,
+            "valid" if not matrix_errors else "; ".join(matrix_errors),
+        )
+    )
+    adversarial = run_adversarial_regression()
+    checks.append(
+        ReadinessCheck(
+            "adversarial_regression",
+            bool(adversarial.get("ready")),
+            f"{adversarial.get('passed', 0)}/{adversarial.get('scenario_count', 0)} scenarios passed",
+        )
+    )
+    boundaries = run_input_boundary_regression()
+    checks.append(
+        ReadinessCheck(
+            "input_boundary_regression",
+            bool(boundaries.get("ready")),
+            f"{boundaries.get('passed', 0)}/{boundaries.get('scenario_count', 0)} scenarios passed",
+        )
+    )
     return checks
 
 
@@ -64,40 +91,21 @@ def readiness_summary(checks):
 
 
 def compatibility_matrix():
-    """Describe the stable chat-type contract used by Ghostea."""
-    cases = [
-        ("group", "private", False, False),
-        ("supergroup", "private", False, False),
-        ("supergroup", "public", False, False),
-        ("supergroup", "private", True, False),
-        ("supergroup", "public", True, False),
-        ("private", "private", False, False),
-        ("private", "private", False, True),
-    ]
-    result = []
-    for chat_type, visibility, is_forum, private_topics in cases:
-        ctx = ChatContext(
-            chat_id=1,
-            chat_type=chat_type,
-            title="",
-            username="example" if visibility == "public" and chat_type == "supergroup" else None,
-            is_group=chat_type == "group",
-            is_supergroup=chat_type == "supergroup",
-            is_forum=is_forum,
-            topic_id=42 if is_forum or private_topics else None,
-            visibility=visibility,
-            private_topics_enabled=private_topics,
-        )
-        caps = resolve_chat_capabilities(ctx)
-        visibility_info = resolve_chat_visibility(ctx)
-        result.append({
-            "kind": caps.kind,
-            "visibility": visibility_info.visibility,
-            "supports_moderation": caps.supports_member_moderation,
-            "supports_restriction": caps.supports_member_restriction,
-            "supports_bans": caps.supports_member_ban,
-            "supports_topics": caps.supports_topics,
-            "topic_messages": caps.supports_forum_topic_messages,
-            "public_identity": visibility_info.can_show_public_link,
-        })
-    return result
+    """Return the canonical H13 Telegram compatibility matrix."""
+    return build_matrix()
+
+
+def compatibility_readiness():
+    """Validate the deterministic H13 matrix without network calls."""
+    matrix = build_matrix()
+    errors = validate_matrix(matrix)
+    return {
+        "ready": not errors,
+        "case_count": len(matrix),
+        "validation_errors": errors,
+    }
+
+
+def compatibility_summary():
+    """Expose the full matrix contract for diagnostics."""
+    return matrix_summary()

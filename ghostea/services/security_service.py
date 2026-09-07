@@ -7,6 +7,7 @@ from telegram.constants import ChatMemberStatus
 
 from ghostea.services.telegram_service import muted_permissions
 from ghostea.services.telegram_contract import CHAT_PERMISSION_FIELDS
+from ghostea.services.telegram_resilience import TelegramErrorPolicy
 
 logger = logging.getLogger("Ghostea")
 
@@ -57,11 +58,13 @@ class SecurityService:
     Verification expiry is likewise keyed by (chat_id, user_id).
     """
 
-    def __init__(self, store, bot):
+    def __init__(self, store, bot, permission_service=None):
         self.store = store
         self.bot = bot
+        self.permission_service = permission_service
         self._task = None
         self._raid_tasks = {}
+        self.error_policy = TelegramErrorPolicy()
 
     def discard_chat(self, chat_id: int):
         """Cancel transient recovery tasks for a migrated chat id."""
@@ -184,6 +187,8 @@ class SecurityService:
         )
 
         try:
+            if self.permission_service is not None:
+                await self.permission_service.require_bot(chat, "set_default_permissions")
             await chat.set_permissions(permissions=muted_permissions())
         except Exception:
             await self.store.delete_security_lock(chat.id, "raid")
@@ -213,7 +218,9 @@ class SecurityService:
 
         original = row.get("original_permissions") or {}
         try:
-            chat = await self.bot.get_chat(chat_id)
+            chat = await self.error_policy.call_read(
+                lambda: self.bot.get_chat(chat_id), scope_id=int(chat_id)
+            )
             if original:
                 current = getattr(chat, "permissions", None)
                 muted = muted_permissions()
@@ -226,6 +233,8 @@ class SecurityService:
                         "default permissions changed during raid lock; preserved newer state",
                     )
                 else:
+                    if self.permission_service is not None:
+                        await self.permission_service.require_bot(chat, "set_default_permissions")
                     await chat.set_permissions(
                         permissions=_permissions_from_dict(original)
                     )
@@ -244,12 +253,23 @@ class SecurityService:
                     "RAID_UNLOCK_SKIPPED",
                     "no original permission snapshot available",
                 )
-        finally:
+        except Exception as error:
+            # Keep the durable lock when Telegram is temporarily unavailable
+            # or permissions are no longer sufficient. The recovery loop can
+            # retry later; deleting the row here would make the lock unrecoverable
+            # after a process restart.
+            failure = TelegramErrorPolicy.classify(error)
+            logger.warning(
+                "Raid unlock deferred: chat=%s kind=%s error=%s",
+                chat_id, failure.kind, error,
+            )
+            return False
+        else:
             await self.store.delete_security_lock(chat_id, "raid")
             task = self._raid_tasks.pop(int(chat_id), None)
             if task and not task.done() and task is not asyncio.current_task():
                 task.cancel()
-        return True
+            return True
 
     async def expire_verifications(self):
         now = datetime.now(timezone.utc).isoformat()
@@ -260,7 +280,9 @@ class SecurityService:
             user_id = int(row["user_id"])
 
             try:
-                member = await self.bot.get_chat_member(chat_id, user_id)
+                member = await self.error_policy.call_read(
+                    lambda: self.bot.get_chat_member(chat_id, user_id), scope_id=chat_id
+                )
                 if member.status in (
                     ChatMemberStatus.ADMINISTRATOR,
                     ChatMemberStatus.OWNER,
@@ -274,6 +296,11 @@ class SecurityService:
                     ChatMemberStatus.MEMBER,
                     ChatMemberStatus.RESTRICTED,
                 ):
+                    chat = await self.error_policy.call_read(
+                        lambda: self.bot.get_chat(chat_id), scope_id=chat_id
+                    )
+                    if self.permission_service is not None:
+                        await self.permission_service.require_bot(chat, "ban_member")
                     await self.bot.ban_chat_member(
                         chat_id=chat_id,
                         user_id=user_id,
@@ -286,13 +313,24 @@ class SecurityService:
                         "member did not complete verification",
                     )
             except Exception as error:
-                # If the user already left or was banned, the cleanup below
-                # should still happen. Telegram errors are logged for admins.
-                logger.warning(
-                    "Verification expiry action failed: chat=%s user=%s error=%s",
-                    chat_id,
-                    user_id,
-                    error,
-                )
-            finally:
-                await self.store.delete_verification(chat_id, user_id)
+                # Durable verification state must survive transient Telegram
+                # failures. Only definitive membership outcomes should clear
+                # the record; otherwise the next recovery pass retries it.
+                failure = TelegramErrorPolicy.classify(error)
+                if failure.transient:
+                    logger.warning(
+                        "Verification expiry deferred after transient Telegram failure: chat=%s user=%s error=%s",
+                        chat_id, user_id, error,
+                    )
+                    continue
+                # Forbidden/not-found can mean the user is no longer present
+                # or the chat is no longer reachable. Cleanup is safe for a
+                # non-transient terminal membership outcome. Unknown errors
+                # remain durable so recovery can retry safely.
+                if failure.kind in {"forbidden", "bad_request"}:
+                    await self.store.delete_verification(chat_id, user_id)
+                else:
+                    logger.warning(
+                        "Verification expiry deferred after unknown Telegram failure: chat=%s user=%s error=%s",
+                        chat_id, user_id, error,
+                    )

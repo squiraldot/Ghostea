@@ -1,14 +1,16 @@
 from datetime import datetime, timedelta, timezone
 
-from ghostea.services.telegram_service import muted_permissions
+from ghostea.services.telegram_service import muted_permissions, perform_ban_member, perform_mute_member
 from ghostea.services.chat_context import build_chat_context
 
 
 class Phase3ModerationService:
     SCOPE = "chat_wide_state_topic_aware_logs"
 
-    def __init__(self, store):
+    def __init__(self, store, bot=None, permission_service=None):
         self.store = store
+        self.bot = bot
+        self.permission_service = permission_service
 
     async def issue_warning(self, chat, user, reason, source, topic_id=None):
         # Warning count and punishment ladder are intentionally chat-wide.
@@ -20,13 +22,14 @@ class Phase3ModerationService:
 
         limit = max(1, int(settings.get("max_warnings", 3)))
         if count >= limit:
-            await chat.ban_member(user_id=user.id)
+            result = await perform_ban_member(chat, user.id, self.permission_service)
             await self.store.log(
-                chat.id, user.id, "BAN", reason,
-                f"warning_count={count}",
+                chat.id, user.id, "BAN" if result.ok else "BAN_FAILED",
+                reason,
+                f"warning_count={count};action_status={result.status.value};detail={result.detail}",
                 topic_id=topic_id,
             )
-            return count, "ban"
+            return count, "ban" if result.ok else f"ban_failed:{result.status.value}"
 
         chat_context = build_chat_context(chat)
         # Basic groups support message deletion and member bans, but Telegram's
@@ -47,16 +50,12 @@ class Phase3ModerationService:
             if count == 1
             else int(settings["mute2_minutes"])
         )
-        until_date = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-
-        await chat.restrict_member(
-            user_id=user.id,
-            permissions=muted_permissions(),
-            until_date=until_date,
+        result = await perform_mute_member(
+            chat, user.id, minutes, self.permission_service
         )
         await self.store.log(
-            chat.id, user.id, "MUTE", reason,
-            f"warning_count={count};minutes={minutes}",
+            chat.id, user.id, "MUTE" if result.ok else "MUTE_FAILED", reason,
+            f"warning_count={count};minutes={minutes};action_status={result.status.value};detail={result.detail}",
             topic_id=topic_id,
         )
-        return count, f"mute:{minutes}"
+        return count, f"mute:{minutes}" if result.ok else f"mute_failed:{result.status.value}"

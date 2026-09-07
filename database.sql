@@ -73,11 +73,15 @@ create table if not exists ghostea_topic_registry (
     name text,
     is_active boolean not null default true,
     is_closed boolean not null default false,
+    is_hidden boolean not null default false,
     first_seen_at timestamptz not null default now(),
     last_seen_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     primary key (chat_id, topic_id)
 );
+
+alter table if exists ghostea_topic_registry
+    add column if not exists is_hidden boolean not null default false;
 
 create index if not exists idx_ghostea_topic_registry_chat_activity
     on ghostea_topic_registry(chat_id, is_active, updated_at desc);

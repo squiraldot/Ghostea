@@ -13,6 +13,7 @@ from ghostea.services.chat_capabilities import (
     resolve_forum_compatibility,
 )
 from ghostea.services.chat_visibility import visibility_from_registry
+from ghostea.services.observability import OBSERVABILITY, new_request_id, set_request_id, reset_request_id
 
 
 MAX_BODY_BYTES = 32 * 1024
@@ -75,6 +76,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     analytics = None
     admins = None
     user_management = None
+    permission_service = None
+    observability = OBSERVABILITY
     _async_loop = None
     _rate_lock = threading.Lock()
     _rate = defaultdict(deque)
@@ -189,6 +192,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             cls._cache[key] = (time.monotonic() + GET_CACHE_TTL, payload)
         return payload
 
+    @classmethod
+    def _invalidate_cache(cls, prefix=None):
+        with cls._cache_lock:
+            if prefix is None:
+                cls._cache.clear()
+            else:
+                for key in [k for k in cls._cache if k.startswith(prefix)]:
+                    cls._cache.pop(key, None)
+
     def _authorized(self):
         expected = os.getenv("DASHBOARD_API_KEY", "").strip()
         supplied = self.headers.get("Authorization", "")
@@ -260,6 +272,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        _obs_token = set_request_id(new_request_id("http"))
+        self._obs_token = _obs_token
+        OBSERVABILITY.emit("http_request", method="GET", path=urlparse(self.path).path)
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -278,14 +293,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/auth/me":
                 role = self.headers.get("X-Ghostea-Role", "")
                 admin_id = self.headers.get("X-Ghostea-Admin-Id", "")
-                username = self.headers.get("X-Ghostea-Username", "")
+                current = None
+                if self.admins and admin_id.isdigit():
+                    try:
+                        current = self._run_async(self.admins.authorize(admin_id, role))
+                    except Exception:
+                        current = None
+                if not current:
+                    return _json(self, 401, {"error": "session_not_active"})
                 return _json(self, 200, {
                     "authenticated": True,
-                    "admin": {
-                        "id": int(admin_id) if admin_id.isdigit() else 0,
-                        "username": username,
-                        "role": role,
-                    },
+                    "admin": current,
                 })
 
             if path == "/api/auth/admins":
@@ -293,6 +311,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 rows = self._run_async(self.admins.list_admins())
                 return _json(self, 200, {"admins": rows})
+
+            if path == "/api/diagnostics":
+                if not self._require_permission("read"):
+                    return
+                limit = 100
+                try:
+                    limit = max(1, min(int(parse_qs(parsed.query).get("limit", ["100"])[0]), 200))
+                except (TypeError, ValueError):
+                    pass
+                return _json(self, 200, {
+                    "ok": True,
+                    "service": "ghostea",
+                    "observability": OBSERVABILITY.snapshot(limit),
+                })
 
             if path == "/api/health":
                 # This is a real database check rather than a hard-coded flag.
@@ -530,6 +562,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return _json(self, 404, {"error": "not_found"})
 
     def do_POST(self):
+        _obs_token = set_request_id(new_request_id("http"))
+        self._obs_token = _obs_token
+        OBSERVABILITY.emit("http_request", method="POST", path=urlparse(self.path).path)
         parsed = urlparse(self.path)
 
         # Vercel authenticates against this server-to-server endpoint.
@@ -577,6 +612,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         payload.get("display_name", ""),
                     )
                 )
+                self._invalidate_cache()
                 return _json(self, 201, {"admin": admin})
             except ValueError as e:
                 return _json(self, 400, {"error": str(e)})
@@ -647,11 +683,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     result = self.user_management._run_action(
                         "unmute", chat_id, target_user_id, admin_id=current_admin_id
                     )
+                self._invalidate_cache(f"groups:{current_admin_id}")
                 return _json(self, 200, result)
             except PermissionError as error:
-                if str(error) == "target_lookup_failed":
-                    return _json(self, 503, {"error": "target_lookup_failed"})
-                return _json(self, 403, {"error": "target_is_admin"})
+                message = str(error)
+                if message == "target_lookup_failed":
+                    return _json(self, 503, {"error": "target_lookup_failed", "retryable": True})
+                if message == "target_is_admin":
+                    return _json(self, 403, {"error": "target_is_admin", "retryable": False})
+                if message.startswith("missing_bot_permission:"):
+                    return _json(self, 503, {"error": "bot_permission_unavailable", "retryable": True})
+                if message.startswith(("mute_failed:", "ban_failed:", "unmute_failed:", "unban_failed:")):
+                    return _json(self, 502, {"error": "telegram_action_failed", "detail": message.split(":", 1)[1], "retryable": False})
+                if message == "member_restriction_not_supported_for_basic_group":
+                    return _json(self, 409, {"error": message, "retryable": False})
+                return _json(self, 502, {"error": "telegram_action_failed", "retryable": False})
             except (ValueError, TypeError):
                 return _json(self, 400, {"error": "invalid_request"})
             except Exception:
@@ -690,6 +736,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
     def do_DELETE(self):
+        _obs_token = set_request_id(new_request_id("http"))
+        self._obs_token = _obs_token
+        OBSERVABILITY.emit("http_request", method="DELETE", path=urlparse(self.path).path)
         if not self._protected():
             return
         parsed = urlparse(self.path)
@@ -719,6 +768,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             result = self._run_async(
                 self.store.remove_custom_filter_by_id(chat_id, filter_id)
             )
+            self._invalidate_cache("groups:")
             return _json(self, 200, {"ok": True, "deleted": len(result or [])})
         except (ValueError, TypeError):
             return _json(self, 400, {"error": "invalid_request"})
@@ -726,6 +776,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
     def do_PATCH(self):
+        _obs_token = set_request_id(new_request_id("http"))
+        self._obs_token = _obs_token
+        OBSERVABILITY.emit("http_request", method="PATCH", path=urlparse(self.path).path)
         if not self._protected():
             return
 
@@ -743,6 +796,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return _json(self, 413, {"error": "payload_too_large"})
                 payload = json.loads(self.rfile.read(length) or b"{}")
                 result = self._run_async(self.admins.update(admin_id, payload))
+                self._invalidate_cache()
                 return _json(self, 200, {"admin": result})
             except ValueError as e:
                 return _json(self, 400, {"error": str(e)})
@@ -772,6 +826,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 else:
                     changes = {k:v for k,v in payload.items() if k != "clear"}
                     result = self._run_async(self.store.update_topic_settings(chat_id, topic_id, changes))
+                self._invalidate_cache("groups:")
                 return _json(self, 200, {"chat_id": chat_id, "topic_id": topic_id, "overrides": result})
             except ValueError as e:
                 return _json(self, 400, {"error": str(e)})
@@ -869,6 +924,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Route through the store so the bot's short-lived settings cache
             # is invalidated immediately after a dashboard update.
             result = self._run_async(self.store.update_settings(chat_id, changes))
+            self._invalidate_cache("groups:")
             return _json(self, 200, result)
         except json.JSONDecodeError:
             return _json(self, 400, {"error": "invalid_json"})
@@ -878,13 +934,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
 
-def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=None, production_readiness=None):
+def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=None, production_readiness=None, permission_service=None):
     port = int(os.getenv("PORT", "10000"))
     DashboardHandler.store = store
     DashboardHandler.analytics = analytics
     DashboardHandler.risk = risk
     DashboardHandler.admins = admins
     DashboardHandler.user_management = None
+    DashboardHandler.permission_service = permission_service
     DashboardHandler._async_loop = loop
 
     server = ThreadingHTTPServer(("0.0.0.0", port), DashboardHandler)
@@ -902,7 +959,7 @@ def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=No
     if bot is not None:
         from ghostea.services.user_management_service import UserManagementService
 
-        manager = UserManagementService(store, bot)
+        manager = UserManagementService(store, bot, permission_service=permission_service)
 
         async def _profile(chat_id, user_id):
             return await manager.profile(chat_id, user_id)

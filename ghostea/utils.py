@@ -17,8 +17,14 @@ def get_target_user(update):
     message = update.effective_message
 
     if message and message.reply_to_message:
-        return message.reply_to_message.from_user
+        reply = message.reply_to_message
+        if getattr(reply, "sender_chat", None) is not None:
+            return None
+        return reply.from_user
 
+    sender_chat = getattr(message, "sender_chat", None) if message else None
+    if sender_chat is not None:
+        return None
     return update.effective_user
 
 
@@ -26,5 +32,9 @@ def target_from_update(update):
     """Return replied-to user when available, otherwise sender."""
     message = getattr(update, "effective_message", None)
     reply = getattr(message, "reply_to_message", None) if message else None
+    if reply and getattr(reply, "sender_chat", None) is not None:
+        return None
     target = getattr(reply, "from_user", None) if reply else None
+    if target is not None and getattr(target, "is_bot", False):
+        return None
     return target or getattr(update, "effective_user", None)

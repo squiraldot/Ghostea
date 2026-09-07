@@ -40,6 +40,8 @@ async def topics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = ["🧵 Topics:"]
         for row in rows:
             state = "closed" if row.get("is_closed") else "open"
+            if row.get("is_hidden"):
+                state = "hidden"
             if not row.get("is_active", True):
                 state = "deleted"
             lines.append(

@@ -22,23 +22,13 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
     # available to the bot. Reconcile type/username/forum state after the
     # permission cache has been invalidated. Private chats are intentionally
     # excluded because the registry is group/supergroup scoped.
-    # A membership update is the earliest reliable signal that Ghostea has
-    # been added to a group. Telegram may not deliver ordinary group messages
-    # when privacy mode is enabled, so the dashboard must not depend on a
-    # message being processed before the group becomes visible.
-    if getattr(event.chat, "type", None) in {"group", "supergroup"}:
+    migrations = context.application.bot_data.get("chat_migrations")
+    if migrations and getattr(event.chat, "type", None) in {"group", "supergroup"}:
         try:
-            from ghostea.services.chat_context import build_chat_context
-            store = context.application.bot_data.get("phase3_store")
-            migrations = context.application.bot_data.get("chat_migrations")
-            chat_context = build_chat_context(event.chat)
-            if store and chat_context:
-                await store.touch_chat(chat_context)
-            elif migrations and chat_context:
-                await migrations.reconcile_chat(chat_context, reason="my_chat_member")
+            await migrations.reconcile_chat(event.chat, reason="my_chat_member")
         except Exception:
-            # Membership events must not break the bot, but the failure remains
-            # observable so persistence problems are diagnosable.
+            # Permission changes must never fail merely because registry
+            # reconciliation is unavailable.
             logger.exception("Chat lifecycle reconciliation failed: chat=%s", event.chat.id)
 
     OBSERVABILITY.emit("bot_membership_change",
