@@ -77,6 +77,20 @@ class ChatMigrationService:
             self.permission_service.invalidate_chat(int(chat_id))
         return result, chat
 
+    @staticmethod
+    def _validate_migration_ids(old_chat_id, new_chat_id):
+        """Validate Telegram migration identifiers before touching persistent state."""
+        try:
+            old_chat_id = int(old_chat_id)
+            new_chat_id = int(new_chat_id)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Telegram migration chat ids must be integers") from exc
+        if old_chat_id == new_chat_id:
+            raise ValueError("Telegram migration requires distinct old and new chat ids")
+        if old_chat_id == 0 or new_chat_id == 0:
+            raise ValueError("Telegram migration chat ids cannot be zero")
+        return old_chat_id, new_chat_id
+
     async def handle_migration(self, old_chat_id, new_chat_id, *, reason="telegram_migration"):
         """Run migration, then verify the new Telegram identity.
 
@@ -85,8 +99,7 @@ class ChatMigrationService:
         unavailable, the durable migration remains resumable but is not
         represented as a verified lifecycle transition.
         """
-        old_chat_id = int(old_chat_id)
-        new_chat_id = int(new_chat_id)
+        old_chat_id, new_chat_id = self._validate_migration_ids(old_chat_id, new_chat_id)
         result = await self.migrate(old_chat_id, new_chat_id)
         if self.permission_service is not None:
             self.permission_service.invalidate_chat(old_chat_id)
@@ -155,8 +168,7 @@ class ChatMigrationService:
         )
 
     async def migrate(self, old_chat_id, new_chat_id):
-        old_chat_id = int(old_chat_id)
-        new_chat_id = int(new_chat_id)
+        old_chat_id, new_chat_id = self._validate_migration_ids(old_chat_id, new_chat_id)
         if old_chat_id == new_chat_id:
             return {"status": "noop", "migrated": []}
 
