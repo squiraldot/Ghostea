@@ -75,6 +75,7 @@ from ghostea.services.production_readiness import local_readiness, readiness_sum
 from ghostea.services.permission_service import TelegramPermissionService
 from ghostea.services.state_recovery import StateRecoveryService
 from ghostea.services.telegram_resilience import TelegramErrorPolicy
+from ghostea.services.group_authorization import GroupAuthorizationService
 from ghostea.services.concurrency import UpdateDeduplicator
 from ghostea.services.observability import OBSERVABILITY, new_request_id, set_request_id, reset_request_id
 from ghostea.storage.database import SupabaseREST
@@ -207,6 +208,7 @@ def create_application():
     moderation.bot = application.bot
     moderation.permission_service = permission_service
     user_management = UserManagementService(store, application.bot, permission_service=permission_service)
+    group_authorization = GroupAuthorizationService(store, permission_service)
     forum_topics.bot = application.bot
     forum_topics.permission_service = permission_service
 
@@ -220,6 +222,7 @@ def create_application():
         "analytics": analytics,
         "admins": admins,
         "user_management": user_management,
+        "group_authorization": group_authorization,
         "verification": verification,
         "security": security,
         "risk": risk,

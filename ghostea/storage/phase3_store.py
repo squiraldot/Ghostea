@@ -89,6 +89,24 @@ class Phase3Store:
                 if key[0] == chat_id:
                     self._reputation_locks.pop(key, None)
 
+    async def list_registered_chats(self, limit=500):
+        """Return Ghostea-linked group/supergroup records for authorization flows.
+
+        The registry is the set of chats this bot instance knows about.  It is
+        deliberately not treated as an authorization source: callers must
+        re-check the Telegram user's current membership/admin status before
+        granting an action in a chat.
+        """
+        limit = max(1, min(int(limit), 500))
+        return await self._call(
+            self.db.select,
+            "ghostea_chat_registry",
+            {
+                "order": "last_seen_at.desc",
+                "limit": str(limit),
+            },
+        )
+
     async def touch_chat(self, chat_context):
         """Persist lightweight chat capabilities with a 60-second throttle."""
         if not chat_context or not chat_context.is_supported:
