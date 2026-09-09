@@ -113,11 +113,23 @@ def build_chat_context(chat, message=None, private_topics_enabled=False) -> Opti
     private_topics = bool(is_private and private_topics_enabled)
     thread_id = getattr(message, "message_thread_id", None) if message else None
     topic_id = None
-    if (is_forum or private_topics) and thread_id is not None:
+    if is_forum:
+        # Telegram's General forum topic is the one exception to the normal
+        # message_thread_id rule: General messages do not carry a thread id.
+        # Treat it as topic id 1 so topic-scoped settings/moderation and the
+        # upload topic picker do not accidentally fall back to chat-wide scope.
+        if thread_id is None and message is not None:
+            topic_id = 1
+        else:
+            try:
+                topic_id = int(thread_id)
+            except (TypeError, ValueError, OverflowError):
+                # Malformed thread metadata must never create a topic scope.
+                topic_id = None
+    elif private_topics and thread_id is not None:
         try:
             topic_id = int(thread_id)
         except (TypeError, ValueError, OverflowError):
-            # Malformed thread metadata must never create a topic scope.
             topic_id = None
 
     try:

@@ -17,6 +17,9 @@ logger = logging.getLogger("Ghostea")
 
 GENERAL_TOPIC_ID = 1
 MAX_TOPIC_TITLE_LENGTH = 128
+ALLOWED_TOPIC_ICON_COLORS = frozenset({
+    7322096, 16766590, 13338331, 9367192, 16749490, 16478047,
+})
 
 
 class ForumTopicError(RuntimeError):
@@ -138,17 +141,62 @@ class ForumTopicService:
         return ctx.topic_id if ctx else None
 
     async def list_topics(self, chat, include_inactive=False, limit=200):
-        await self._context(chat)
-        return await self.store.list_topics(
+        context, caps, profile = await self._context(chat)
+        rows = await self.store.list_topics(
             chat.id, include_inactive=include_inactive, limit=limit
         )
+
+        # General is always present in a Telegram forum, but it does not emit
+        # a message_thread_id on ordinary messages. Seed its local row so a
+        # fresh forum can still expose a usable topic selector before Ghostea
+        # has observed a custom-topic service message.
+        if context.is_forum and int(limit) > 0:
+            general = next((r for r in rows if int(r.get("topic_id", 0)) == GENERAL_TOPIC_ID), None)
+            if general is None:
+                existing = await self.store.get_topic(chat.id, GENERAL_TOPIC_ID)
+                if existing:
+                    general = existing
+                else:
+                    general = await self.store.upsert_topic_lifecycle(
+                        chat.id, GENERAL_TOPIC_ID, name="General",
+                        is_active=True, is_closed=False, is_hidden=False
+                    )
+                rows = [general] + rows
+            else:
+                # Keep General first regardless of registry update order.
+                rows = [general] + [r for r in rows if r is not general]
+        return rows[:max(1, min(int(limit), 500))]
+
+    async def list_selectable_topics(self, chat, limit=200):
+        """Return topics safe for a future publish/upload selector.
+
+        A topic must still be active, open, and visible. Telegram does not
+        expose a Bot API method to enumerate forum topics, so this is backed by
+        Ghostea's observed lifecycle registry and always revalidated at publish
+        time by the caller.
+        """
+        rows = await self.list_topics(chat, include_inactive=False, limit=limit)
+        selectable = [
+            row for row in rows
+            if row.get("is_active", True)
+            and not row.get("is_closed", False)
+            and not row.get("is_hidden", False)
+        ]
+        selectable.sort(key=lambda row: (0 if int(row.get("topic_id", 0)) == GENERAL_TOPIC_ID else 1, str(row.get("name") or "").lower()))
+        return selectable[:max(1, min(int(limit), 500))]
 
     async def create_topic(self, chat, title, icon_color=None, icon_custom_emoji_id=None):
         await self._require_manage_topics(chat)
         title = self._validate_title(title)
         kwargs = {"chat_id": chat.id, "name": title}
         if icon_color is not None:
-            kwargs["icon_color"] = int(icon_color)
+            try:
+                icon_color = int(icon_color)
+            except (TypeError, ValueError):
+                raise ForumTopicError("Invalid topic icon color.")
+            if icon_color not in ALLOWED_TOPIC_ICON_COLORS:
+                raise ForumTopicError("Unsupported topic icon color.")
+            kwargs["icon_color"] = icon_color
         if icon_custom_emoji_id:
             kwargs["icon_custom_emoji_id"] = str(icon_custom_emoji_id)
 
