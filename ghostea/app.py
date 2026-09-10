@@ -55,7 +55,7 @@ from ghostea.handlers.phase5 import (
 )
 from ghostea.handlers.phase6 import analytics_command, export_command, health_command
 from ghostea.handlers.phase20 import compatibility_command, readiness_command
-from ghostea.handlers.upload_workflow import uploadconfig_command, uploadflag_command, upload_callback, upload_message, resource_download_callback
+from ghostea.handlers.upload_workflow import uploadconfig_command, uploadflag_command, upload_callback, upload_message, resource_download_callback, link_group_command
 from ghostea.handlers.forum_topics import (
     topics_command, topiccreate_command, topicrename_command,
     topicclose_command, topicreopen_command, topicdelete_command,
@@ -322,6 +322,7 @@ def create_application():
         application.add_handler(CommandHandler(command, callback))
 
     # Phase 6 — DM upload workflows
+    application.add_handler(CommandHandler("link", link_group_command))
     application.add_handler(CommandHandler("uploadconfig", uploadconfig_command))
     application.add_handler(CommandHandler("uploadflag", uploadflag_command))
     application.add_handler(CallbackQueryHandler(upload_callback, pattern=r"^upload:"))

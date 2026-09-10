@@ -23,16 +23,6 @@ create table if not exists ghostea_chat_registry (
 create index if not exists idx_ghostea_chat_registry_forum
     on ghostea_chat_registry (is_forum);
 
--- Phase 7/8 lifecycle hardening: distinguish historical chat data from a
--- currently linked bot chat. Leaving/kicked chats are soft-unlinked so
--- dashboard/live authorization stops exposing them without destroying audit
--- history. Existing rows are considered linked until Telegram says otherwise.
-alter table ghostea_chat_registry
-    add column if not exists is_linked boolean not null default true;
-
-create index if not exists idx_ghostea_chat_registry_linked
-    on ghostea_chat_registry (is_linked);
-
 -- A basic Telegram group cannot be a Forum; forum is a supergroup
 -- capability. Keep the invariant in the database as well as application code.
 do $$

@@ -11,9 +11,6 @@ Phase 7 connects the Phase 6 DM workflow's `READY` state to actual Telegram publ
 - `/uploadflag` publishes the image with copy-friendly Main-Flag/Sub-Flags and a separate description message in the same topic.
 - Published metadata is persisted in `ghostea_resources` for the dashboard and future management features.
 - READY -> PUBLISHING is claimed with a conditional database update to prevent duplicate confirmation clicks.
-- Closed topics are allowed for upload publishing: if the bot has `can_manage_topics`, Ghostea reopens the closed topic immediately before publishing, then sends the content.
-- Hidden General and deleted/inactive topics remain hard rejects.
-- Telegram itself returns `TOPIC_CLOSED` for direct sends to a closed topic, so Ghostea does not pretend there is a separate "post while closed" permission; it uses the bot's `can_manage_topics` permission to reopen first.
 - The workflow's admin/topic revalidation runs immediately before Telegram publishing.
 
 ## Supabase
@@ -38,7 +35,6 @@ Use a disposable test group first.
 5. Repeat in a forum custom topic and verify the post stays in that topic.
 6. Repeat in General and verify it does not force a custom thread.
 7. `/uploadflag` -> image -> Main-Flag -> Sub-Flags -> description -> Upload.
-8. Close the selected topic before confirmation and verify Ghostea reopens it (when the bot has Manage Topics) and publishes successfully.
-9. Hide General or delete the selected topic before confirmation and verify publishing is rejected.
-10. Remove the requester's admin rights before confirmation and verify publishing is rejected.
-11. Double-tap Upload and verify only one publication is created.
+8. Close/delete the selected topic before confirmation and verify publishing is rejected.
+9. Remove the requester's admin rights before confirmation and verify publishing is rejected.
+10. Double-tap Upload and verify only one publication is created.

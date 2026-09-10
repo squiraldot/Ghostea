@@ -178,7 +178,7 @@ class UploadWorkflowEngine:
             payload = dict(s.payload)
             payload.update({"selected_group": {"chat_id": chat_id, "title": getattr(chat, "title", None) or item.get("title") or str(chat_id), "is_forum": is_forum}})
             if is_forum:
-                topics = await self.forum_topics.list_selectable_topics(chat, limit=MAX_TOPICS, include_closed=True)
+                topics = await self.forum_topics.list_selectable_topics(chat, limit=MAX_TOPICS)
                 payload["topics"] = [{"topic_id": int(t["topic_id"]), "name": t.get("name") or f"Topic {t['topic_id']}"} for t in topics]
                 await self._save(s, state=UploadState.SELECT_TOPIC.value, payload=payload, chat_id=chat_id, topic_id=None)
             else:
@@ -201,7 +201,7 @@ class UploadWorkflowEngine:
             chat = await self.bot.get_chat(chat_id)
             if getattr(chat, "type", None) != ChatType.SUPERGROUP or not getattr(chat, "is_forum", False):
                 raise UploadWorkflowError("❌ This group is no longer a forum.")
-            fresh = await self.forum_topics.list_selectable_topics(chat, limit=MAX_TOPICS, include_closed=True)
+            fresh = await self.forum_topics.list_selectable_topics(chat, limit=MAX_TOPICS)
             topic_id = int(item["topic_id"])
             if not any(int(t["topic_id"]) == topic_id for t in fresh):
                 raise UploadWorkflowError("❌ That topic is no longer available. Please start again.")
@@ -353,14 +353,9 @@ class UploadWorkflowEngine:
         if s.topic_id is not None:
             if getattr(chat, "type", None) != ChatType.SUPERGROUP or not getattr(chat, "is_forum", False):
                 raise UploadWorkflowError("❌ The selected forum is no longer available.")
-            # Closed topics are intentionally allowed here. Telegram does not
-            # provide a separate "post to closed topic" permission; an admin
-            # bot with can_manage_topics can reopen the topic and then publish.
-            # Hidden General and deleted/inactive topics remain hard rejects.
-            rows = await self.forum_topics.list_topics(chat, include_inactive=True, limit=MAX_TOPICS)
-            selected = next((t for t in rows if int(t.get("topic_id", 0)) == int(s.topic_id)), None)
-            if selected is None or not selected.get("is_active", True) or selected.get("is_hidden", False):
-                raise UploadWorkflowError("❌ The selected topic is hidden, deleted, or no longer available.")
+            fresh = await self.forum_topics.list_selectable_topics(chat, limit=MAX_TOPICS)
+            if not any(int(t["topic_id"]) == int(s.topic_id) for t in fresh):
+                raise UploadWorkflowError("❌ The selected topic is closed, hidden, deleted, or no longer available.")
         return chat
 
     async def cancel(self, session_id, user_id):

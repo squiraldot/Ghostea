@@ -113,40 +113,17 @@ class ResourcePublishingService:
         p = session.payload
         resource_id = self._id()
 
-        # Telegram rejects sends to closed topics. There is no separate
-        # "post while closed" permission; the supported admin capability is
-        # can_manage_topics, which lets the bot reopen the topic. For upload
-        # publishing, honor that capability by reopening a closed (but visible
-        # and active) topic immediately before sending. Hidden General and
-        # deleted/inactive topics are rejected by _revalidate().
-        if session.topic_id is not None:
-            rows = await self.forum_topics.list_topics(chat, include_inactive=True, limit=200)
-            selected = next((r for r in rows if int(r.get("topic_id", 0)) == int(session.topic_id)), None)
-            if selected is None or not selected.get("is_active", True) or selected.get("is_hidden", False):
-                raise ResourcePublishError("❌ The selected topic is hidden, deleted, or no longer available.")
-            if selected.get("is_closed", False):
-                # Telegram does not permit ordinary sends to a closed forum
-                # topic. A bot with Manage Topics can reopen it first. Check
-                # the permission explicitly so the failure is deterministic
-                # instead of relying on a generic Telegram API error.
-                try:
-                    me = await self.bot.get_me()
-                    bot_member = await self.bot.get_chat_member(int(session.chat_id), int(me.id))
-                    is_admin = getattr(bot_member, "status", None) in ("administrator", "creator")
-                    can_manage = getattr(bot_member, "status", None) == "creator" or bool(getattr(bot_member, "can_manage_topics", False))
-                except Exception as exc:
-                    raise ResourcePublishError(
-                        "❌ Ghostea could not verify the bot's Manage Topics permission for this closed topic."
-                    ) from exc
-                if not is_admin or not can_manage:
-                    raise ResourcePublishError(
-                        "❌ This topic is closed and the bot needs Manage Topics permission to reopen it."
-                    )
+        # Telegram does not allow sending a message into a closed forum topic.
+        # If the bot has can_manage_topics, reopen it first, then publish.
+        if session.topic_id is not None and int(session.topic_id) != GENERAL_TOPIC_ID:
+            topic = await self.store.get_topic(chat.id, int(session.topic_id))
+            if topic and topic.get("is_closed"):
                 try:
                     await self.forum_topics.reopen_topic(chat, int(session.topic_id))
                 except Exception as exc:
                     raise ResourcePublishError(
-                        "❌ The selected topic is closed and Ghostea could not reopen it with the bot's current Manage Topics permission."
+                        "❌ The selected topic is closed and the bot cannot reopen it. "
+                        "Give the bot Manage Topics permission or reopen the topic manually."
                     ) from exc
 
         thread = self._thread_kwargs(chat, session.topic_id)

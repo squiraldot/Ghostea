@@ -19,6 +19,27 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
         service.invalidate_chat(event.chat.id)
     invalidate_admin_cache(event.chat.id)
 
+    # Keep the durable link state authoritative. Telegram emits my_chat_member
+    # when this bot is added, promoted/demoted, or removed from a chat.
+    # "left"/"kicked" means the bot is no longer linked; every other membership
+    # state means the chat remains linked (even if the bot temporarily lacks
+    # administrator rights).
+    store = context.application.bot_data.get("phase3_store")
+    if store:
+        try:
+            status = str(getattr(event.new_chat_member, "status", "") or "")
+            linked = status not in {"left", "kicked"}
+            await store._call(
+                store.db.update,
+                "ghostea_chat_registry",
+                {
+                    "is_linked": linked,
+                },
+                {"chat_id": f"eq.{int(event.chat.id)}"},
+            )
+        except Exception:
+            logger.exception("Failed to update chat link lifecycle: chat=%s", event.chat.id)
+
     # H08: the Chat object on lifecycle updates is the freshest identity signal
     # available to the bot. Reconcile type/username/forum state after the
     # permission cache has been invalidated. Private chats are intentionally
@@ -27,7 +48,10 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
     if migrations and getattr(event.chat, "type", None) in {"group", "supergroup"}:
         try:
             chat_context = build_chat_context(event.chat)
-            await migrations.reconcile_chat(chat_context, reason="my_chat_member")
+            if chat_context is not None:
+                await migrations.reconcile_chat(
+                    chat_context, reason="my_chat_member"
+                )
         except Exception:
             # Permission changes must never fail merely because registry
             # reconciliation is unavailable.

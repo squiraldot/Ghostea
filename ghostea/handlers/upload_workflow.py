@@ -112,21 +112,19 @@ async def upload_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session=await engine.cancel(session_id, update.effective_user.id)
             await q.edit_message_text("❌ Upload cancelled."); return
         elif action == "confirm":
-            # Phase 7: the Upload button is the actual publish action.
-            # The workflow engine still performs the final validation; the
-            # publisher then revalidates again immediately before Telegram I/O.
-            session=await engine.confirm(session_id, update.effective_user.id)
+            await engine.confirm(session_id, update.effective_user.id)
             publisher = context.application.bot_data["resource_publishing"]
-            resource_id = await publisher.publish(session.session_id, update.effective_user.id)
-            await q.edit_message_text(f"✅ Uploaded successfully.\nResource ID: <code>{resource_id}</code>", parse_mode="HTML")
+            resource_id = await publisher.publish(session_id, update.effective_user.id)
+            await q.edit_message_text(
+                f"✅ Upload published successfully.\nResource ID: <code>{resource_id}</code>",
+                parse_mode="HTML",
+            )
             return
         else: raise UploadWorkflowError("Invalid workflow action.")
         await q.edit_message_text("Selection saved.")
         await _send_state(q.message, session)
-    except (UploadWorkflowError, ResourcePublishError) as exc:
+    except UploadWorkflowError as exc:
         await q.edit_message_text(str(exc))
-    except Exception:
-        await q.edit_message_text("❌ Upload failed due to an unexpected error. Please try again.")
 
 async def upload_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user or not update.effective_chat or update.effective_chat.type != ChatType.PRIVATE:
@@ -174,3 +172,50 @@ async def resource_download_callback(update: Update, context: ContextTypes.DEFAU
         await q.answer(str(exc), show_alert=True)
     except Exception:
         await q.answer("❌ Download failed. Please try again later.", show_alert=True)
+
+
+async def link_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Explicitly bootstrap/reconcile a group for DM upload discovery.
+
+    Telegram cannot enumerate all groups a bot is in. This command provides a
+    deterministic fallback for an existing group that predates Ghostea's
+    lifecycle registry or whose pending my_chat_member update was lost.
+    """
+    chat = update.effective_chat
+    user = update.effective_user
+    if not chat or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        if update.effective_message:
+            await update.effective_message.reply_text(
+                "ℹ️ Use /link in the Telegram group you want to connect to Ghostea."
+            )
+        return
+
+    permissions = context.application.bot_data["telegram_permissions"]
+    try:
+        bot_perms = await permissions.bot_permissions(chat, force=True)
+        if not bot_perms.is_admin:
+            await update.effective_message.reply_text(
+                "❌ Ghostea Bot must be an administrator in this group first."
+            )
+            return
+
+        if not await permissions.is_admin(chat, user.id, force=True):
+            await update.effective_message.reply_text(
+                "❌ Only a current Telegram group admin can link this group."
+            )
+            return
+
+        from ghostea.services.chat_context import build_chat_context
+        migrations = context.application.bot_data["chat_migrations"]
+        chat_context = build_chat_context(chat)
+        if not chat_context:
+            raise RuntimeError("Unsupported Telegram chat type.")
+
+        await migrations.reconcile_chat(chat_context, reason="explicit_link")
+        await update.effective_message.reply_text(
+            "✅ This group is linked to Ghostea. You can now open the bot DM and use /uploadconfig or /uploadflag."
+        )
+    except Exception:
+        await update.effective_message.reply_text(
+            "❌ I couldn't link this group right now. Please verify the bot is an administrator and try again."
+        )
