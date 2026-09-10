@@ -409,3 +409,65 @@ left join ghostea_reputation r
 -- Set GHOSTEA_SUPERADMIN_USERNAME (optional; defaults to "superadmin")
 -- and keep GHOSTEA_ADMIN_PASSWORD in Render. The first successful login
 -- creates that account as the initial Super Admin with a scrypt password hash.
+
+-- ============================================================
+-- PHASE 6 — DM upload workflow sessions
+-- Durable state for /uploadconfig and /uploadflag. Sessions contain
+-- short-lived workflow payloads only; published resources are added later.
+-- ============================================================
+create table if not exists ghostea_upload_sessions (
+    session_id text primary key,
+    user_id bigint not null,
+    chat_id bigint not null,
+    topic_id bigint,
+    mode text not null check (mode in ('resource', 'flag')),
+    state text not null,
+    payload jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now(),
+    expires_at timestamptz not null,
+    updated_at timestamptz not null default now(),
+    constraint ghostea_upload_sessions_payload_object
+        check (jsonb_typeof(payload) = 'object'),
+    constraint ghostea_upload_sessions_topic_positive
+        check (topic_id is null or topic_id >= 1)
+);
+
+create index if not exists idx_ghostea_upload_sessions_user_active
+    on ghostea_upload_sessions(user_id, state, expires_at);
+create index if not exists idx_ghostea_upload_sessions_expiry
+    on ghostea_upload_sessions(expires_at);
+create index if not exists idx_ghostea_upload_sessions_target
+    on ghostea_upload_sessions(chat_id, topic_id, updated_at desc);
+
+-- ============================================================
+-- PHASE 7 — Published resource / flag registry
+-- Durable metadata for Telegram-published resources and download callbacks.
+-- ============================================================
+create table if not exists ghostea_resources (
+    resource_id text primary key,
+    workflow_session_id text unique,
+    chat_id bigint not null,
+    topic_id bigint,
+    mode text not null check (mode in ('resource', 'flag')),
+    source_kind text not null check (source_kind in ('document', 'photo', 'video', 'audio', 'animation', 'url')),
+    source_file_id text,
+    source_url text,
+    caption text,
+    description text not null,
+    main_flag text,
+    sub_flags text,
+    published_message_id bigint,
+    published_extra_message_id bigint,
+    created_by bigint not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint ghostea_resources_target_topic_positive
+        check (topic_id is null or topic_id >= 1),
+    constraint ghostea_resources_source_exclusive
+        check ((source_file_id is not null and source_url is null) or (source_file_id is null and source_url is not null))
+);
+
+create index if not exists idx_ghostea_resources_target
+    on ghostea_resources(chat_id, topic_id, created_at desc);
+create index if not exists idx_ghostea_resources_created_by
+    on ghostea_resources(created_by, created_at desc);

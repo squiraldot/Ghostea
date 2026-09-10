@@ -136,6 +136,53 @@ class Phase3Store:
             raise
 
 
+    async def create_upload_session(self, session_id, user_id, chat_id, topic_id, mode, state, payload, created_at, expires_at):
+        row = {
+            "session_id": str(session_id), "user_id": int(user_id), "chat_id": int(chat_id),
+            "topic_id": int(topic_id) if topic_id is not None else None, "mode": str(mode),
+            "state": str(state), "payload": dict(payload or {}),
+            "created_at": created_at, "expires_at": expires_at, "updated_at": created_at,
+        }
+        return (await self._call(self.db.insert, "ghostea_upload_sessions", row, True))[0]
+
+    async def latest_active_upload_session(self, user_id):
+        rows = await self._call(self.db.select, "ghostea_upload_sessions", {
+            "user_id": f"eq.{int(user_id)}",
+            "state": "not.in.(cancelled,expired,ready)",
+            "order": "updated_at.desc", "limit": "1"
+        })
+        return rows[0] if rows else None
+
+    async def get_upload_session(self, session_id):
+        rows = await self._call(self.db.select, "ghostea_upload_sessions", {
+            "session_id": f"eq.{str(session_id)}", "limit": "1"
+        })
+        return rows[0] if rows else None
+
+    async def update_upload_session(self, session_id, **changes):
+        clean = dict(changes)
+        clean["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if "chat_id" in clean and clean["chat_id"] is not None:
+            clean["chat_id"] = int(clean["chat_id"])
+        if "topic_id" in clean and clean["topic_id"] is not None:
+            clean["topic_id"] = int(clean["topic_id"])
+        return (await self._call(self.db.update, "ghostea_upload_sessions", clean, {
+            "session_id": f"eq.{str(session_id)}"
+        }))
+
+    async def expire_upload_sessions(self, now=None, limit=500):
+        now = now or datetime.now(timezone.utc).isoformat()
+        rows = await self._call(self.db.select, "ghostea_upload_sessions", {
+            "expires_at": f"lt.{now}",
+            "state": "not.in.(cancelled,expired,ready)",
+            "select": "session_id", "limit": str(max(1, min(int(limit), 500)))
+        })
+        count = 0
+        for row in rows:
+            await self.update_upload_session(row["session_id"], state="expired")
+            count += 1
+        return count
+
     @staticmethod
     def _topic_event(message):
         """Return (state, name, hidden) for Telegram forum-topic service messages."""
@@ -1234,3 +1281,31 @@ class Phase3Store:
             },
         )
 
+
+    async def create_resource(self, row):
+        return (await self._call(self.db.insert, "ghostea_resources", dict(row), True))[0]
+
+    async def get_resource(self, resource_id):
+        rows = await self._call(self.db.select, "ghostea_resources", {
+            "resource_id": f"eq.{str(resource_id)}", "limit": "1"
+        })
+        return rows[0] if rows else None
+
+
+    async def claim_upload_for_publish(self, session_id, user_id):
+        rows = await self._call(self.db.update, "ghostea_upload_sessions", {
+            "state": "publishing",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, {
+            "session_id": f"eq.{str(session_id)}",
+            "user_id": f"eq.{int(user_id)}",
+            "state": "eq.ready",
+        })
+        return rows[0] if rows else None
+
+
+    async def get_resource_by_session(self, session_id):
+        rows = await self._call(self.db.select, "ghostea_resources", {
+            "workflow_session_id": f"eq.{str(session_id)}", "limit": "1"
+        })
+        return rows[0] if rows else None

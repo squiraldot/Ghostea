@@ -167,7 +167,7 @@ class ForumTopicService:
                 rows = [general] + [r for r in rows if r is not general]
         return rows[:max(1, min(int(limit), 500))]
 
-    async def list_selectable_topics(self, chat, limit=200):
+    async def list_selectable_topics(self, chat, limit=200, include_closed=False):
         """Return topics safe for a future publish/upload selector.
 
         A topic must still be active, open, and visible. Telegram does not
@@ -176,11 +176,14 @@ class ForumTopicService:
         time by the caller.
         """
         rows = await self.list_topics(chat, include_inactive=False, limit=limit)
+        # Closed topics are excluded from the normal topic selector. Upload
+        # publishing may opt in with include_closed=True because the publish
+        # layer can reopen a closed topic when the bot has can_manage_topics.
         selectable = [
             row for row in rows
             if row.get("is_active", True)
-            and not row.get("is_closed", False)
             and not row.get("is_hidden", False)
+            and (include_closed or not row.get("is_closed", False))
         ]
         selectable.sort(key=lambda row: (0 if int(row.get("topic_id", 0)) == GENERAL_TOPIC_ID else 1, str(row.get("name") or "").lower()))
         return selectable[:max(1, min(int(limit), 500))]

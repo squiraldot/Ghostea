@@ -4,6 +4,7 @@ from telegram import ChatMember
 from telegram.constants import ChatMemberStatus
 
 from ghostea.services.chat_context import build_chat_context
+from ghostea.services.moderation_target_guard import verify_moderation_target, ModerationTargetError
 from ghostea.services.telegram_service import (
     ban_member,
     mute_member,
@@ -56,27 +57,22 @@ class UserManagementService:
 
         return data
 
-    async def _guard_target(self, chat_id, target_user_id):
-        # Fail closed when Telegram cannot tell us the target's status. A
-        # transient API failure must never become permission to moderate an
-        # unknown account that could be an administrator.
+    async def _guard_target(self, chat_id, target_user_id, requester_id=None):
+        # Dashboard actions use the same live fail-closed target policy as
+        # Telegram commands.  ``requester_id`` also prevents self-punishment.
         try:
-            member = await self.permission_service.member(
-                await self.bot.get_chat(chat_id), target_user_id
-            ) if self.permission_service is not None else await self.bot.get_chat_member(chat_id, target_user_id)
-        except Exception:
-            return False, "target_lookup_failed"
-
-        if member.status in (
-            ChatMemberStatus.ADMINISTRATOR,
-            ChatMemberStatus.OWNER,
-        ):
-            return False, "target_is_admin"
-
+            chat = await self.bot.get_chat(chat_id)
+            await verify_moderation_target(
+                chat, target_user_id, self.permission_service,
+                requester_id=requester_id,
+            )
+        except Exception as exc:
+            detail = str(exc) or "target_lookup_failed"
+            return False, detail
         return True, ""
 
     async def warn(self, chat_id, target_user_id, admin_user_id, reason):
-        allowed, error = await self._guard_target(chat_id, target_user_id)
+        allowed, error = await self._guard_target(chat_id, target_user_id, admin_user_id)
         if not allowed:
             raise PermissionError(error)
 
@@ -107,7 +103,7 @@ class UserManagementService:
         return await service.issue_warning(chat, user, reason, "dashboard")
 
     async def reset_warnings(self, chat_id, target_user_id, admin_user_id):
-        allowed, error = await self._guard_target(chat_id, target_user_id)
+        allowed, error = await self._guard_target(chat_id, target_user_id, admin_user_id)
         if not allowed:
             raise PermissionError(error)
         await self.store.reset_warnings(chat_id, target_user_id)
@@ -117,7 +113,7 @@ class UserManagementService:
         return await self.profile(chat_id, target_user_id)
 
     async def remove_warning(self, chat_id, target_user_id, admin_user_id):
-        allowed, error = await self._guard_target(chat_id, target_user_id)
+        allowed, error = await self._guard_target(chat_id, target_user_id, admin_user_id)
         if not allowed:
             raise PermissionError(error)
         count = await self.store.remove_warning(chat_id, target_user_id)
@@ -131,7 +127,7 @@ class UserManagementService:
         return await self.profile(chat_id, target_user_id)
 
     async def ban(self, chat_id, target_user_id, admin_user_id):
-        allowed, error = await self._guard_target(chat_id, target_user_id)
+        allowed, error = await self._guard_target(chat_id, target_user_id, admin_user_id)
         if not allowed:
             raise PermissionError(error)
         chat = await self.bot.get_chat(chat_id)
@@ -161,7 +157,7 @@ class UserManagementService:
         capabilities = chat_context.capabilities if chat_context else None
         if not capabilities or not capabilities.supports_member_restriction:
             raise PermissionError("member_restriction_not_supported_for_basic_group")
-        allowed, error = await self._guard_target(chat_id, target_user_id)
+        allowed, error = await self._guard_target(chat_id, target_user_id, admin_user_id)
         if not allowed:
             raise PermissionError(error)
         result = await perform_mute_member(chat, target_user_id, minutes, self.permission_service)
@@ -181,7 +177,7 @@ class UserManagementService:
         capabilities = chat_context.capabilities if chat_context else None
         if not capabilities or not capabilities.supports_member_restriction:
             raise PermissionError("member_restriction_not_supported_for_basic_group")
-        allowed, error = await self._guard_target(chat_id, target_user_id)
+        allowed, error = await self._guard_target(chat_id, target_user_id, admin_user_id)
         if not allowed:
             raise PermissionError(error)
         result = await perform_unmute_member(chat, target_user_id, self.permission_service)

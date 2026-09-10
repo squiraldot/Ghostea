@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from ghostea.services.telegram_service import muted_permissions, perform_ban_member, perform_mute_member
 from ghostea.services.chat_context import build_chat_context
+from ghostea.services.moderation_target_guard import verify_moderation_target
 
 
 class Phase3ModerationService:
@@ -15,6 +16,9 @@ class Phase3ModerationService:
     async def issue_warning(self, chat, user, reason, source, topic_id=None):
         # Warning count and punishment ladder are intentionally chat-wide.
         # ``topic_id`` below is telemetry context only; it never scopes state.
+        # Re-check the target immediately before recording/punishing so an
+        # admin promotion or departure race fails closed.
+        await verify_moderation_target(chat, user.id, self.permission_service)
         settings = await self.store.get_settings(chat.id)
         count = await self.store.add_warning(
             chat.id, user.id, reason, source

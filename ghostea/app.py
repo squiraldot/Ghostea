@@ -55,6 +55,7 @@ from ghostea.handlers.phase5 import (
 )
 from ghostea.handlers.phase6 import analytics_command, export_command, health_command
 from ghostea.handlers.phase20 import compatibility_command, readiness_command
+from ghostea.handlers.upload_workflow import uploadconfig_command, uploadflag_command, upload_callback, upload_message, resource_download_callback
 from ghostea.handlers.forum_topics import (
     topics_command, topiccreate_command, topicrename_command,
     topicclose_command, topicreopen_command, topicdelete_command,
@@ -76,6 +77,8 @@ from ghostea.services.permission_service import TelegramPermissionService
 from ghostea.services.state_recovery import StateRecoveryService
 from ghostea.services.telegram_resilience import TelegramErrorPolicy
 from ghostea.services.group_authorization import GroupAuthorizationService
+from ghostea.services.upload_workflow import UploadWorkflowEngine
+from ghostea.services.resource_publishing import ResourcePublishingService
 from ghostea.services.concurrency import UpdateDeduplicator
 from ghostea.services.observability import OBSERVABILITY, new_request_id, set_request_id, reset_request_id
 from ghostea.storage.database import SupabaseREST
@@ -211,6 +214,8 @@ def create_application():
     group_authorization = GroupAuthorizationService(store, permission_service)
     forum_topics.bot = application.bot
     forum_topics.permission_service = permission_service
+    upload_workflow = UploadWorkflowEngine(store, group_authorization, forum_topics, application.bot)
+    resource_publishing = ResourcePublishingService(store, upload_workflow, group_authorization, forum_topics, application.bot)
 
     application.bot_data.update({
         "abuse_filter": abuse_filter,
@@ -223,6 +228,8 @@ def create_application():
         "admins": admins,
         "user_management": user_management,
         "group_authorization": group_authorization,
+        "upload_workflow": upload_workflow,
+        "resource_publishing": resource_publishing,
         "verification": verification,
         "security": security,
         "risk": risk,
@@ -313,6 +320,13 @@ def create_application():
         "health": health_command,
     }.items():
         application.add_handler(CommandHandler(command, callback))
+
+    # Phase 6 — DM upload workflows
+    application.add_handler(CommandHandler("uploadconfig", uploadconfig_command))
+    application.add_handler(CommandHandler("uploadflag", uploadflag_command))
+    application.add_handler(CallbackQueryHandler(upload_callback, pattern=r"^upload:"))
+    application.add_handler(CallbackQueryHandler(resource_download_callback, pattern=r"^resource:"))
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, upload_message))
 
     # Phase 15 — Forum Supergroup Engine
     for command, callback in {

@@ -8,6 +8,7 @@ from ghostea.services.chat_context import build_chat_context
 from ghostea.services.action_result import ActionResult, ActionStatus, execute_action, set_concurrency_gate
 from ghostea.services.permission_service import PermissionLookupError, TelegramPermissionService
 from ghostea.services.concurrency import ConcurrencyGate
+from ghostea.services.moderation_target_guard import verify_moderation_target
 
 _ACTION_GATE = ConcurrencyGate(max_external=32, max_key_locks=20000)
 set_concurrency_gate(_ACTION_GATE)
@@ -180,8 +181,9 @@ async def perform_delete_message(message, chat, permission_service=None) -> Acti
     return await execute_action("delete_message", message.delete)
 
 
-async def perform_mute_member(chat, user_id: int, minutes: int, permission_service=None) -> ActionResult:
+async def perform_mute_member(chat, user_id: int, minutes: int, permission_service=None, requester_id=None) -> ActionResult:
     try:
+        await verify_moderation_target(chat, user_id, permission_service, requester_id=requester_id)
         chat_context = build_chat_context(chat)
         if not chat_context or not chat_context.capabilities.supports_member_restriction:
             return ActionResult("restrict_member", ActionStatus.SKIPPED_UNSUPPORTED,
@@ -202,8 +204,9 @@ async def perform_mute_member(chat, user_id: int, minutes: int, permission_servi
         return ActionResult("restrict_member", status, detail, retry_after)
 
 
-async def perform_unmute_member(chat, user_id: int, permission_service=None) -> ActionResult:
+async def perform_unmute_member(chat, user_id: int, permission_service=None, requester_id=None) -> ActionResult:
     try:
+        await verify_moderation_target(chat, user_id, permission_service, requester_id=requester_id)
         chat_context = build_chat_context(chat)
         if not chat_context or not chat_context.capabilities.supports_member_restriction:
             return ActionResult("unrestrict_member", ActionStatus.SKIPPED_UNSUPPORTED,
@@ -233,8 +236,9 @@ async def perform_unmute_member(chat, user_id: int, permission_service=None) -> 
         return ActionResult("unrestrict_member", status, detail, retry_after)
 
 
-async def perform_ban_member(chat, user_id: int, permission_service=None) -> ActionResult:
+async def perform_ban_member(chat, user_id: int, permission_service=None, requester_id=None) -> ActionResult:
     try:
+        await verify_moderation_target(chat, user_id, permission_service, requester_id=requester_id)
         chat_context = build_chat_context(chat)
         if not chat_context or not chat_context.capabilities.supports_member_ban:
             return ActionResult("ban_member", ActionStatus.SKIPPED_UNSUPPORTED,
@@ -251,8 +255,10 @@ async def perform_ban_member(chat, user_id: int, permission_service=None) -> Act
         return ActionResult("ban_member", status, detail, retry_after)
 
 
-async def perform_unban_member(chat, user_id: int, permission_service=None) -> ActionResult:
+async def perform_unban_member(chat, user_id: int, permission_service=None, requester_id=None) -> ActionResult:
     try:
+        if requester_id is not None and int(user_id) == int(requester_id):
+            return ActionResult("unban_member", ActionStatus.SKIPPED_NO_PERMISSION, "target_is_requester")
         chat_context = build_chat_context(chat)
         if not chat_context or not chat_context.capabilities.is_supergroup:
             return ActionResult("unban_member", ActionStatus.SKIPPED_UNSUPPORTED,

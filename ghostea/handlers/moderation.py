@@ -81,7 +81,7 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("❌ Admins cannot be banned by this bot.")
         return
     try:
-        result = await perform_ban_member(update.effective_chat, target.id, context.application.bot_data.get("telegram_permissions"))
+        result = await perform_ban_member(update.effective_chat, target.id, context.application.bot_data.get("telegram_permissions"), requester_id=update.effective_user.id)
         if not result.ok:
             await update.effective_message.reply_text(f"❌ Ban failed ({result.status.value}).")
             return
@@ -123,7 +123,7 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("Usage: reply to a user with /mute 10m, /mute 1h or /mute 1d")
         return
     try:
-        result = await perform_mute_member(update.effective_chat, target.id, minutes, context.application.bot_data.get("telegram_permissions"))
+        result = await perform_mute_member(update.effective_chat, target.id, minutes, context.application.bot_data.get("telegram_permissions"), requester_id=update.effective_user.id)
         if not result.ok:
             await update.effective_message.reply_text(f"❌ Mute failed ({result.status.value}).")
             return
