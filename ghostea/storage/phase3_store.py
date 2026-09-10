@@ -107,7 +107,7 @@ class Phase3Store:
             },
         )
 
-    async def touch_chat(self, chat_context):
+\n    async def link_chat(self, chat, *, linked_by=None):\n        """Persist an explicitly dashboard-linked Telegram group."""\n        from datetime import datetime, timezone\n        chat_id = int(chat.id)\n        row = {\n            "chat_id": chat_id,\n            "chat_type": str(chat.type),\n            "title": getattr(chat, "title", None),\n            "username": getattr(chat, "username", None),\n            "visibility": "public" if getattr(chat, "username", None) else "private",\n            "is_forum": bool(getattr(chat, "is_forum", False)),\n            "is_linked": True,\n            "linked_by": str(linked_by) if linked_by is not None else None,\n            "last_seen_at": datetime.now(timezone.utc).isoformat(),\n            "updated_at": datetime.now(timezone.utc).isoformat(),\n        }\n        return await self._call(self.db.upsert, "ghostea_chat_registry", row)\n\n    async def touch_chat(self, chat_context):
         """Persist lightweight chat capabilities with a 60-second throttle."""
         if not chat_context or not chat_context.is_supported:
             return None

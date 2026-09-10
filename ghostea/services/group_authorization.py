@@ -123,13 +123,31 @@ class GroupAuthorizationService:
                 if not bot_permissions.is_admin:
                     continue
 
-                member = await self.permission_service.member(
-                    chat, user_id, force=True
-                )
-                if member.status not in (
-                    ChatMemberStatus.ADMINISTRATOR,
-                    ChatMemberStatus.OWNER,
-                ):
+                try:
+                    member = await self.permission_service.member(
+                        chat, user_id, force=True
+                    )
+                    is_admin = member.status in (
+                        ChatMemberStatus.ADMINISTRATOR,
+                        ChatMemberStatus.OWNER,
+                    )
+                except PermissionLookupError:
+                    # Defensive fallback: Telegram also exposes the complete
+                    # administrator list for a known chat. This is not used
+                    # as discovery; it is only a second live authorization
+                    # check for the already-linked chat.
+                    admins = await self.permission_service.error_policy.call_read(
+                        chat.get_administrators, scope_id=chat_id
+                    )
+                    is_admin = any(
+                        int(getattr(a.user, "id", -1)) == user_id
+                        and getattr(a, "status", None) in (
+                            ChatMemberStatus.ADMINISTRATOR,
+                            ChatMemberStatus.OWNER,
+                        )
+                        for a in admins
+                    )
+                if not is_admin:
                     continue
 
                 result.append(

@@ -162,6 +162,7 @@ export default async function handler(req, res) {
 
   const pathname = parsedPath.pathname;
   const match = pathname.match(/^\/api\/groups\/(-?\d+)\/(settings|analytics|logs|filters|risk)$/);
+  const groupLink = pathname === "/api/groups/link";
   const topics = pathname.match(/^\/api\/groups\/(-?\d+)\/topics$/);
   const topicSettings = pathname.match(/^\/api\/groups\/(-?\d+)\/topics\/(-?\d+)\/settings$/);
   const filterDelete = pathname.match(/^\/api\/groups\/(-?\d+)\/filters\/(\d+)$/);
@@ -171,7 +172,7 @@ export default async function handler(req, res) {
   const authMe = pathname === "/api/auth/me";
   const admins = pathname === "/api/auth/admins";
   const adminItem = pathname.match(/^\/api\/auth\/admins\/(\d+)$/);
-  const allowed = ALLOWED_GET.has(pathname) || Boolean(match) || Boolean(topics) || Boolean(topicSettings) || Boolean(filterDelete) || Boolean(userProfile) || Boolean(userList) || Boolean(userAction) || authMe || admins || Boolean(adminItem);
+  const allowed = ALLOWED_GET.has(pathname) || Boolean(match) || groupLink || Boolean(topics) || Boolean(topicSettings) || Boolean(filterDelete) || Boolean(userProfile) || Boolean(userList) || Boolean(userAction) || authMe || admins || Boolean(adminItem);
   if (!allowed) return json(res, 404, { error: "not_found" });
 
   if (!["GET", "PATCH", "POST", "DELETE"].includes(req.method)) {
@@ -181,7 +182,7 @@ export default async function handler(req, res) {
   if (req.method === "PATCH" && !(match && pathname.endsWith("/settings")) && !topicSettings && !adminItem) {
     return json(res, 405, { error: "method_not_allowed" });
   }
-  if (req.method === "POST" && !((match && pathname.endsWith("/filters")) || userAction || admins)) {
+  if (req.method === "POST" && !((match && pathname.endsWith("/filters")) || groupLink || userAction || admins)) {
     return json(res, 405, { error: "method_not_allowed" });
   }
   if (req.method === "DELETE" && !filterDelete && !adminItem) {

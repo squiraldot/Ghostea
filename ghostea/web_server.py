@@ -213,6 +213,38 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Origin header. Direct browser calls must match the configured origin.
         return not origin or not request_origin or request_origin == origin
 
+    def _verify_and_link_group(self, chat_id, linked_by):
+        """Verify a Telegram chat and explicitly link it for this deployment."""
+        chat_id = int(chat_id)
+        chat = self._run_async(
+            self.permission_service.error_policy.call_read(
+                self.server.bot.get_chat, chat_id, scope_id=chat_id
+            )
+        )
+        if getattr(chat, "type", None) not in ("group", "supergroup"):
+            raise ValueError("unsupported_chat_type")
+        bot_perms = self._run_async(
+            self.permission_service.bot_permissions(chat, force=True)
+        )
+        if not bot_perms.is_member:
+            raise PermissionError("bot_not_in_group")
+        if not bot_perms.is_admin:
+            raise PermissionError("bot_not_admin")
+        self._run_async(self.store.link_chat(chat, linked_by=linked_by))
+        # Materialize default settings so a newly dashboard-linked group is
+        # immediately visible to /api/groups and existing dashboard features.
+        self._run_async(self.store.get_settings(chat_id))
+        self._invalidate_cache("groups:")
+        return {
+            "ok": True,
+            "chat_id": chat_id,
+            "title": getattr(chat, "title", None),
+            "chat_type": getattr(chat, "type", None),
+            "username": getattr(chat, "username", None),
+            "is_forum": bool(getattr(chat, "is_forum", False)),
+            "message": "Group verified and linked successfully.",
+        }
+
     def _require_permission(self, permission):
         role = self.headers.get("X-Ghostea-Role", "")
         admin_id = self.headers.get("X-Ghostea-Admin-Id", "")
@@ -359,7 +391,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     registry = self._call_sync(
                         self.store.db.select,
                         "ghostea_chat_registry",
-                        {"select": "chat_id,chat_type,title,username,visibility,is_forum", "limit": "200"},
+                        {"select": "chat_id,chat_type,title,username,visibility,is_forum,is_linked", "limit": "200"},
                     )
                 except Exception:
                     registry = []
@@ -368,6 +400,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 for row in rows:
                     item = dict(row)
                     info = meta.get(str(row.get("chat_id")))
+                    if info and info.get("is_linked") is False:
+                        continue
                     if info:
                         for key in ("chat_type", "title", "username", "visibility", "is_forum"):
                             item[key] = info.get(key)
@@ -596,6 +630,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not self._protected():
             return
         parts = parsed.path.split("/")
+        if parsed.path == "/api/groups/link":
+            if not self._require_permission("settings"):
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MAX_BODY_BYTES:
+                    return _json(self, 413, {"error": "payload_too_large"})
+                if not self.headers.get("Content-Type", "").startswith("application/json"):
+                    return _json(self, 415, {"error": "json_required"})
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                chat_id = int(str(payload.get("chat_id", "")).strip())
+                if chat_id == 0 or abs(chat_id) > 2**52:
+                    return _json(self, 400, {"error": "invalid_chat_id"})
+                result = self._verify_and_link_group(
+                    chat_id,
+                    self.headers.get("X-Ghostea-Admin-Id", ""),
+                )
+                return _json(self, 201, result)
+            except PermissionError as error:
+                code = str(error)
+                if code == "bot_not_in_group":
+                    return _json(self, 409, {"error": "bot_not_in_group"})
+                if code == "bot_not_admin":
+                    return _json(self, 409, {"error": "bot_not_admin"})
+                return _json(self, 403, {"error": "link_denied"})
+            except ValueError as error:
+                msg = str(error)
+                return _json(self, 400, {"error": msg if msg == "unsupported_chat_type" else "invalid_chat_id"})
+            except Exception:
+                return _json(self, 502, {"error": "telegram_link_verification_failed"})
+
         if parsed.path == "/api/auth/admins":
             if not self._require_permission("manage_admins"):
                 return

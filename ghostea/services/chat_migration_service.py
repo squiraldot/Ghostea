@@ -241,6 +241,7 @@ class ChatMigrationService:
         row = {
             "chat_id": chat_id,
             "chat_type": chat_context.chat_type,
+            "is_linked": True,
             "title": chat_context.title or None,
             "username": chat_context.username,
             "visibility": chat_context.visibility,

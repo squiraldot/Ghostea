@@ -43,6 +43,15 @@ end $$;
 alter table ghostea_chat_registry
     add column if not exists visibility text not null default 'private';
 
+alter table ghostea_chat_registry
+    add column if not exists is_linked boolean not null default true;
+
+alter table ghostea_chat_registry
+    add column if not exists linked_by text;
+
+create index if not exists idx_ghostea_chat_registry_linked
+    on ghostea_chat_registry (is_linked);
+
 do $$
 begin
     if not exists (

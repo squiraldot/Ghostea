@@ -176,6 +176,7 @@ def create_application():
                 production_readiness=application.bot_data.get("production_readiness", {}),
                 permission_service=permission_service,
             )
+            server.bot = application.bot
             application.bot_data["web_server"] = server
             logger.info("Ghostea web server started.")
         except Exception:
