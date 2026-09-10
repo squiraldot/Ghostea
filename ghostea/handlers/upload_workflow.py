@@ -112,14 +112,21 @@ async def upload_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session=await engine.cancel(session_id, update.effective_user.id)
             await q.edit_message_text("❌ Upload cancelled."); return
         elif action == "confirm":
+            # Phase 7: the Upload button is the actual publish action.
+            # The workflow engine still performs the final validation; the
+            # publisher then revalidates again immediately before Telegram I/O.
             session=await engine.confirm(session_id, update.effective_user.id)
-            await q.edit_message_text("✅ Workflow validated. Phase 7 publishing will use this READY session.")
+            publisher = context.application.bot_data["resource_publishing"]
+            resource_id = await publisher.publish(session.session_id, update.effective_user.id)
+            await q.edit_message_text(f"✅ Uploaded successfully.\nResource ID: <code>{resource_id}</code>", parse_mode="HTML")
             return
         else: raise UploadWorkflowError("Invalid workflow action.")
         await q.edit_message_text("Selection saved.")
         await _send_state(q.message, session)
-    except UploadWorkflowError as exc:
+    except (UploadWorkflowError, ResourcePublishError) as exc:
         await q.edit_message_text(str(exc))
+    except Exception:
+        await q.edit_message_text("❌ Upload failed due to an unexpected error. Please try again.")
 
 async def upload_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user or not update.effective_chat or update.effective_chat.type != ChatType.PRIVATE:

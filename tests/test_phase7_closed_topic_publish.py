@@ -47,7 +47,11 @@ class Phase7ClosedTopicTests(unittest.IsolatedAsyncioTestCase):
             "payload": {"source": {"kind": "url", "url": "https://example.com"}, "caption": "C", "description": "D"},
         }
         topics = Topics()
-        service = ResourcePublishingService(store, Workflow(), None, topics, SimpleNamespace())
+        bot = SimpleNamespace(
+            get_me=AsyncMock(return_value=SimpleNamespace(id=900)),
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status="administrator", can_manage_topics=True)),
+        )
+        service = ResourcePublishingService(store, Workflow(), None, topics, bot)
         result = await service.publish("s1", 42)
         topics.reopen_topic.assert_awaited_once()
         self.assertTrue(result)
@@ -62,7 +66,11 @@ class Phase7ClosedTopicTests(unittest.IsolatedAsyncioTestCase):
         class HiddenTopics(Topics):
             async def list_topics(self, chat, include_inactive=False, limit=200):
                 return [{"chat_id": chat.id, "topic_id": 7, "name": "Hidden", "is_active": True, "is_closed": True, "is_hidden": True}]
-        service = ResourcePublishingService(store, Workflow(), None, HiddenTopics(), SimpleNamespace())
+        bot = SimpleNamespace(
+            get_me=AsyncMock(return_value=SimpleNamespace(id=900)),
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status="administrator", can_manage_topics=True)),
+        )
+        service = ResourcePublishingService(store, Workflow(), None, HiddenTopics(), bot)
         with self.assertRaises(Exception):
             await service.publish("s1", 42)
 

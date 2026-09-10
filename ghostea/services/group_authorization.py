@@ -53,20 +53,23 @@ class GroupAuthorizationService:
         for row in rows:
             try:
                 chat_id = int(row["chat_id"])
-                chat_type = str(row.get("chat_type") or "")
-                if chat_type not in (ChatType.GROUP, ChatType.SUPERGROUP):
-                    continue
-
-                # Telegram guarantees getChatMember for other users when the
-                # bot is an administrator.  Check the bot first so a private
-                # or stale registry entry cannot become an authorization path.
+                # Registry metadata is only a discovery hint. Resolve the live
+                # Chat first so stale chat_type/is_forum values cannot hide a
+                # valid linked group after Telegram-side changes/migrations.
                 chat = await self.permission_service.error_policy.call_read(
                     self.permission_service.bot.get_chat,
                     chat_id,
                     scope_id=chat_id,
                 )
+                chat_type = str(getattr(chat, "type", None) or row.get("chat_type") or "")
+                if chat_type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+                    continue
+
+                # Telegram guarantees getChatMember for other users when the
+                # bot is an administrator. Use a fresh bot permission lookup
+                # at workflow entry because this is a security-sensitive path.
                 bot_permissions = await self.permission_service.bot_permissions(
-                    chat, force=False
+                    chat, force=True
                 )
                 if not bot_permissions.is_admin:
                     continue
@@ -83,22 +86,19 @@ class GroupAuthorizationService:
                 result.append(
                     AuthorizedGroup(
                         chat_id=chat_id,
-                        title=str(row.get("title") or f"Chat {chat_id}"),
+                        title=str(getattr(chat, "title", None) or row.get("title") or f"Chat {chat_id}"),
                         chat_type=chat_type,
-                        is_forum=bool(row.get("is_forum", False)),
-                        username=row.get("username"),
-                        visibility=str(row.get("visibility") or "private"),
+                        is_forum=bool(chat_type == ChatType.SUPERGROUP and getattr(chat, "is_forum", False)),
+                        username=getattr(chat, "username", None) or row.get("username"),
+                        visibility="public" if (getattr(chat, "username", None) or row.get("username")) else "private",
                         bot_is_admin=True,
                     )
                 )
             except (KeyError, TypeError, ValueError, OverflowError):
                 continue
             except PermissionLookupError:
-                # Unknown Telegram state is not authorization.
                 continue
             except Exception:
-                # This method is used for a user-facing group picker. One
-                # inaccessible/stale group must not expose or block others.
                 continue
 
         return result

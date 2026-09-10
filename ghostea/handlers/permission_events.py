@@ -5,6 +5,7 @@ from telegram.ext import ContextTypes
 
 from ghostea.services.telegram_service import invalidate_admin_cache
 from ghostea.services.observability import OBSERVABILITY
+from ghostea.services.chat_context import build_chat_context
 
 logger = logging.getLogger("Ghostea")
 
@@ -25,7 +26,8 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
     migrations = context.application.bot_data.get("chat_migrations")
     if migrations and getattr(event.chat, "type", None) in {"group", "supergroup"}:
         try:
-            await migrations.reconcile_chat(event.chat, reason="my_chat_member")
+            chat_context = build_chat_context(event.chat)
+            await migrations.reconcile_chat(chat_context, reason="my_chat_member")
         except Exception:
             # Permission changes must never fail merely because registry
             # reconciliation is unavailable.

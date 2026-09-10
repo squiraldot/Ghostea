@@ -148,7 +148,7 @@ class Phase3Store:
     async def latest_active_upload_session(self, user_id):
         rows = await self._call(self.db.select, "ghostea_upload_sessions", {
             "user_id": f"eq.{int(user_id)}",
-            "state": "not.in.(cancelled,expired,ready)",
+            "state": "not.in.(cancelled,expired,ready,publishing)",
             "order": "updated_at.desc", "limit": "1"
         })
         return rows[0] if rows else None
@@ -174,7 +174,7 @@ class Phase3Store:
         now = now or datetime.now(timezone.utc).isoformat()
         rows = await self._call(self.db.select, "ghostea_upload_sessions", {
             "expires_at": f"lt.{now}",
-            "state": "not.in.(cancelled,expired,ready)",
+            "state": "not.in.(cancelled,expired,ready,publishing)",
             "select": "session_id", "limit": str(max(1, min(int(limit), 500)))
         })
         count = 0

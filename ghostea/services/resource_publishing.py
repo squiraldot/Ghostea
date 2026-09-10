@@ -125,11 +125,28 @@ class ResourcePublishingService:
             if selected is None or not selected.get("is_active", True) or selected.get("is_hidden", False):
                 raise ResourcePublishError("❌ The selected topic is hidden, deleted, or no longer available.")
             if selected.get("is_closed", False):
+                # Telegram does not permit ordinary sends to a closed forum
+                # topic. A bot with Manage Topics can reopen it first. Check
+                # the permission explicitly so the failure is deterministic
+                # instead of relying on a generic Telegram API error.
+                try:
+                    me = await self.bot.get_me()
+                    bot_member = await self.bot.get_chat_member(int(session.chat_id), int(me.id))
+                    is_admin = getattr(bot_member, "status", None) in ("administrator", "creator")
+                    can_manage = getattr(bot_member, "status", None) == "creator" or bool(getattr(bot_member, "can_manage_topics", False))
+                except Exception as exc:
+                    raise ResourcePublishError(
+                        "❌ Ghostea could not verify the bot's Manage Topics permission for this closed topic."
+                    ) from exc
+                if not is_admin or not can_manage:
+                    raise ResourcePublishError(
+                        "❌ This topic is closed and the bot needs Manage Topics permission to reopen it."
+                    )
                 try:
                     await self.forum_topics.reopen_topic(chat, int(session.topic_id))
                 except Exception as exc:
                     raise ResourcePublishError(
-                        "❌ The selected topic is closed and Ghostea cannot reopen it with the bot's current Manage Topics permission."
+                        "❌ The selected topic is closed and Ghostea could not reopen it with the bot's current Manage Topics permission."
                     ) from exc
 
         thread = self._thread_kwargs(chat, session.topic_id)
