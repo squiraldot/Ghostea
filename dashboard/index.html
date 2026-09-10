@@ -797,7 +797,7 @@ dialog::backdrop{background:rgba(2,5,7,.76);backdrop-filter:blur(13px);-webkit-b
         <div id="addGroupPanel" class="card hidden" style="margin:0 0 14px;background:rgba(184,242,109,.035);border-color:rgba(184,242,109,.16)">
           <div class="section-title"><h3>Link Telegram Group</h3><button id="cancelAddGroup">Cancel</button></div>
           <div class="row" style="align-items:flex-end">
-            <div class="field"><label for="groupIdInput">Telegram Group ID</label><input id="groupIdInput" inputmode="numeric" placeholder="-1001234567890123" autocomplete="off"></div>
+            <div class="field"><label for="groupIdInput">Telegram Group ID</label><input id="groupIdInput" inputmode="text" placeholder="-1001234567890123" autocomplete="off"></div>
             <button id="verifyAddGroup" class="primary">Verify &amp; Link</button>
           </div>
           <p id="addGroupMessage" class="muted" style="margin:10px 0 0">Use the numeric Telegram chat ID. The bot must already be an administrator in that group.</p>
@@ -979,7 +979,7 @@ function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 async function linkGroup(){
   const input=$('groupIdInput'), msg=$('addGroupMessage');
   const raw=input.value.trim();
-  if(!/^-?\\d{1,16}$/.test(raw) || Number(raw)===0){msg.textContent='❌ Enter a valid Telegram numeric Group ID.';return}
+  if(!/^-?\d{1,16}$/.test(raw) || Number(raw)===0){msg.textContent='❌ Enter a valid Telegram Group ID, including the leading - for supergroups (e.g. -1001234567890).';return}
   msg.textContent='⏳ Verifying the group and bot permissions…';
   $('verifyAddGroup').disabled=true;
   try{
