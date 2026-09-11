@@ -663,7 +663,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 counts = {
                     "total": len(rows),
-                    "files": sum(1 for r in rows if r.get("source_kind") != "url"),
+                    "files": sum(1 for r in rows if r.get("source_kind") != "url" and r.get("mode") != "flag"),
                     "urls": sum(1 for r in rows if r.get("source_kind") == "url"),
                     "flags": sum(1 for r in rows if r.get("mode") == "flag"),
                 }
