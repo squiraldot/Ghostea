@@ -163,7 +163,7 @@ export default async function handler(req, res) {
   const pathname = parsedPath.pathname;
   const match = pathname.match(/^\/api\/groups\/(-?\d+)\/(settings|analytics|logs|filters|risk)$/);
   const groupLink = pathname === "/api/groups/link";
-  const topics = pathname.match(/^\/api\/groups\/(-?\d+)\/topics$/);
+  const resources = pathname.match(/^\/api\/groups\/(-?\d+)\/resources$/);\n  const topics = pathname.match(/^\/api\/groups\/(-?\d+)\/topics$/);
   const topicSettings = pathname.match(/^\/api\/groups\/(-?\d+)\/topics\/(-?\d+)\/settings$/);
   const filterDelete = pathname.match(/^\/api\/groups\/(-?\d+)\/filters\/(\d+)$/);
   const userProfile = pathname.match(/^\/api\/groups\/(-?\d+)\/users\/(-?\d+)\/profile$/);
@@ -172,7 +172,7 @@ export default async function handler(req, res) {
   const authMe = pathname === "/api/auth/me";
   const admins = pathname === "/api/auth/admins";
   const adminItem = pathname.match(/^\/api\/auth\/admins\/(\d+)$/);
-  const allowed = ALLOWED_GET.has(pathname) || Boolean(match) || groupLink || Boolean(topics) || Boolean(topicSettings) || Boolean(filterDelete) || Boolean(userProfile) || Boolean(userList) || Boolean(userAction) || authMe || admins || Boolean(adminItem);
+  const allowed = ALLOWED_GET.has(pathname) || Boolean(match) || groupLink || Boolean(resources) || Boolean(topics) || Boolean(topicSettings) || Boolean(filterDelete) || Boolean(userProfile) || Boolean(userList) || Boolean(userAction) || authMe || admins || Boolean(adminItem);
   if (!allowed) return json(res, 404, { error: "not_found" });
 
   if (!["GET", "PATCH", "POST", "DELETE"].includes(req.method)) {

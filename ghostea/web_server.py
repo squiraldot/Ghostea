@@ -637,6 +637,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return _json(self, 200, {"logs": logs})
 
+            if path.startswith("/api/groups/") and path.endswith("/resources"):
+                if not self._require_read(): return
+                parts = path.split("/")
+                if len(parts) != 5:
+                    return _json(self, 404, {"error": "not_found"})
+                chat_id = int(parts[3])
+                params = parse_qs(parsed.query)
+                limit = max(1, min(int(params.get("limit", ["100"])[0]), 200))
+                topic_raw = params.get("topic_id", [None])[0]
+                topic_id = int(topic_raw) if topic_raw not in (None, "") else None
+                if topic_id is not None and not self._require_forum_topic(chat_id, topic_id, require_active=False):
+                    return
+                query = {
+                    "chat_id": f"eq.{chat_id}",
+                    "order": "created_at.desc",
+                    "limit": str(limit),
+                }
+                if topic_id is not None:
+                    query["topic_id"] = f"eq.{topic_id}"
+                rows = self._call_sync(
+                    self.store.db.select,
+                    "ghostea_resources",
+                    query,
+                )
+                counts = {
+                    "total": len(rows),
+                    "files": sum(1 for r in rows if r.get("source_kind") != "url"),
+                    "urls": sum(1 for r in rows if r.get("source_kind") == "url"),
+                    "flags": sum(1 for r in rows if r.get("mode") == "flag"),
+                }
+                return _json(self, 200, {
+                    "resources": rows,
+                    "counts": counts,
+                    "limit": limit,
+                    "topic_id": topic_id,
+                })
+
             if path.startswith("/api/groups/") and path.endswith("/filters"):
                 if not self._require_read(): return
                 parts = path.split("/")
