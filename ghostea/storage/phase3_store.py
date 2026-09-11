@@ -90,18 +90,26 @@ class Phase3Store:
                     self._reputation_locks.pop(key, None)
 
     async def list_registered_chats(self, limit=500):
-        """Return Ghostea-linked group/supergroup records for authorization flows.
-
-        The registry is the set of chats this bot instance knows about.  It is
-        deliberately not treated as an authorization source: callers must
-        re-check the Telegram user's current membership/admin status before
-        granting an action in a chat.
-        """
+        """Return chats known to this Ghostea deployment."""
         limit = max(1, min(int(limit), 500))
         return await self._call(
             self.db.select,
             "ghostea_chat_registry",
             {
+                "order": "last_seen_at.desc",
+                "limit": str(limit),
+            },
+        )
+
+    async def list_linked_chats(self, limit=500):
+        """Return only chats explicitly linked from the dashboard/lifecycle."""
+        limit = max(1, min(int(limit), 500))
+        return await self._call(
+            self.db.select,
+            "ghostea_chat_registry",
+            {
+                "is_linked": "eq.true",
+                "chat_type": "in.(group,supergroup)",
                 "order": "last_seen_at.desc",
                 "limit": str(limit),
             },
