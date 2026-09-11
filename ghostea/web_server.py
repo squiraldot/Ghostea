@@ -421,18 +421,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 })
 
             if path == "/api/health":
-                # This is a real database check rather than a hard-coded flag.
-                self._call_sync(
-                    self.store.db.select,
+                required_tables = [
+                    "ghostea_chat_registry",
                     "ghostea_group_settings",
-                    {"select": "chat_id", "limit": "1"},
+                    "ghostea_topic_registry",
+                    "ghostea_upload_sessions",
+                    "ghostea_resources",
+                    "ghostea_schema_meta",
+                ]
+                table_status = self._call_sync(
+                    self.store.db.check_tables,
+                    required_tables,
                 )
+                schema_ok = all(table_status.values())
                 readiness = getattr(self.server, "production_readiness", {})
-                return _json(self, 200, {
-                    "ok": True,
+                return _json(self, 200 if schema_ok else 503, {
+                    "ok": schema_ok,
                     "service": "ghostea",
-                    "database": True,
-                    "production_ready": bool(readiness.get("ready", True)),
+                    "database": schema_ok,
+                    "schema": {
+                        "version": 9 if table_status.get("ghostea_schema_meta") else None,
+                        "tables": table_status,
+                    },
+                    "production_ready": bool(readiness.get("ready", True)) and schema_ok,
                 })
 
             if path == "/api/groups":

@@ -88,6 +88,17 @@ class SupabaseREST:
     def delete(self, table, query):
         return self._request("DELETE", table, query=query)
 
+    def check_tables(self, tables):
+        """Probe required PostgREST tables without downloading table data."""
+        results = {}
+        for table in tables:
+            try:
+                self.select(table, {"select": "*", "limit": "0"})
+                results[table] = True
+            except Exception:
+                results[table] = False
+        return results
+
     def count(self, table, query=None):
         """Return an exact PostgREST row count without downloading the table."""
         query = dict(query or {})

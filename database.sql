@@ -480,3 +480,34 @@ create index if not exists idx_ghostea_resources_target
     on ghostea_resources(chat_id, topic_id, created_at desc);
 create index if not exists idx_ghostea_resources_created_by
     on ghostea_resources(created_by, created_at desc);
+
+-- ============================================================
+-- PHASE 9 — Database & Data Integrity
+-- Supabase SQL Editor safe: no PL/pgSQL dollar-quoted blocks in this migration.
+-- This section is rerunnable and does not modify or delete historical rows.
+
+create table if not exists ghostea_schema_meta (
+    schema_name text primary key,
+    schema_version integer not null,
+    applied_at timestamptz not null default now()
+);
+
+insert into ghostea_schema_meta(schema_name, schema_version)
+values ('ghostea', 9)
+on conflict (schema_name) do update
+set schema_version = greatest(ghostea_schema_meta.schema_version, excluded.schema_version);
+
+-- Monitoring/query indexes.
+create index if not exists idx_ghostea_resources_chat_created
+    on ghostea_resources(chat_id, created_at desc);
+create index if not exists idx_ghostea_upload_sessions_user_updated
+    on ghostea_upload_sessions(user_id, updated_at desc);
+
+-- Concurrency support: this is intentionally a normal index rather than a
+-- unique partial index because legacy databases may already contain more than
+-- one active session. The application cancels the previous session before
+-- creating a new one, so upgrading an existing DB cannot fail on old data.
+create index if not exists idx_ghostea_upload_sessions_user_nonterminal
+    on ghostea_upload_sessions(user_id)
+    where state not in ('cancelled', 'expired');
+
