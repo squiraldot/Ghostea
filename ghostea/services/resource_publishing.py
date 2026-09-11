@@ -1,11 +1,13 @@
 """Phase 7 — Telegram publishing for resource/config and flag uploads."""
 import html
 import secrets
+import asyncio
 from datetime import datetime, timezone
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatType
 
 from ghostea.services.upload_workflow import UploadMode, UploadState, UploadWorkflowError, MAX_DESCRIPTION_LENGTH
+from ghostea.services.telegram_resilience import TelegramErrorPolicy
 from ghostea.services.forum_topic_service import GENERAL_TOPIC_ID
 
 MAX_RESOURCE_ID = 16
@@ -22,6 +24,9 @@ class ResourcePublishingService:
         self.group_authorization = group_authorization
         self.forum_topics = forum_topics
         self.bot = bot
+        self.telegram_policy = TelegramErrorPolicy()
+        self._publish_locks = {}
+        self._publish_locks_guard = asyncio.Lock()
 
     @staticmethod
     def _id():
@@ -81,7 +86,25 @@ class ResourcePublishingService:
             "updated_at": now,
         })
 
+    async def _publish_lock(self, session_id):
+        async with self._publish_locks_guard:
+            lock = self._publish_locks.get(str(session_id))
+            if lock is None:
+                lock = asyncio.Lock()
+                self._publish_locks[str(session_id)] = lock
+            # Keep the map bounded; never remove a lock that is currently held.
+            if len(self._publish_locks) > 20000:
+                for key, candidate in list(self._publish_locks.items())[:1000]:
+                    if not candidate.locked():
+                        self._publish_locks.pop(key, None)
+            return lock
+
     async def publish(self, session_id, user_id):
+        lock = await self._publish_lock(session_id)
+        async with lock:
+            return await self._publish_locked(session_id, user_id)
+
+    async def _publish_locked(self, session_id, user_id):
         # Atomically claim READY -> PUBLISHING so duplicate callback presses
         # cannot publish the same session twice (including across workers).
         claimed = await self.store.claim_upload_for_publish(session_id, user_id)
@@ -133,22 +156,22 @@ class ResourcePublishingService:
             kind = str(source.get("kind") or "")
             if kind == "url":
                 markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Open / Download", url=str(source["url"]))]])
-                sent = await chat.send_message(self._resource_text(p), parse_mode="HTML", reply_markup=markup, **thread)
+                sent = await self.telegram_policy.call_write_rate_limited(lambda: chat.send_message(self._resource_text(p), parse_mode="HTML", reply_markup=markup, **thread), scope_id=chat.id)
                 await self._save_resource(resource_id=resource_id, session=session, source_kind="url", source_url=source["url"], published_message_id=sent.message_id)
             else:
                 file_id = str(source.get("file_id") or "")
                 if not file_id:
                     raise ResourcePublishError("The uploaded Telegram file is missing.")
                 markup = InlineKeyboardMarkup([[InlineKeyboardButton("📥 Download", callback_data=f"resource:{resource_id}")]])
-                sent = await chat.send_message(self._resource_text(p), parse_mode="HTML", reply_markup=markup, **thread)
+                sent = await self.telegram_policy.call_write_rate_limited(lambda: chat.send_message(self._resource_text(p), parse_mode="HTML", reply_markup=markup, **thread), scope_id=chat.id)
                 await self._save_resource(resource_id=resource_id, session=session, source_kind=kind, source_file_id=file_id, published_message_id=sent.message_id)
         else:
             image = p.get("image") or {}
             image_id = str(image.get("file_id") or "")
             if not image_id:
                 raise ResourcePublishError("The flag image is missing.")
-            sent = await chat.send_photo(image_id, caption=self._flag_caption(p), parse_mode="HTML", **thread)
-            extra = await chat.send_message(html.escape(str(p.get("description") or "")), parse_mode="HTML", **thread)
+            sent = await self.telegram_policy.call_write_rate_limited(lambda: chat.send_photo(image_id, caption=self._flag_caption(p), parse_mode="HTML", **thread), scope_id=chat.id)
+            extra = await self.telegram_policy.call_write_rate_limited(lambda: chat.send_message(html.escape(str(p.get("description") or "")), parse_mode="HTML", **thread), scope_id=chat.id)
             await self._save_resource(resource_id=resource_id, session=session, source_kind="photo", source_file_id=image_id, published_message_id=sent.message_id, published_extra_message_id=extra.message_id)
 
         await self.store.update_upload_session(session.session_id, state=UploadState.CANCELLED.value)
@@ -164,14 +187,14 @@ class ResourcePublishingService:
         chat_id = int(user_id)
         kwargs = {"chat_id": chat_id, "caption": caption} if caption else {"chat_id": chat_id}
         if kind == "document":
-            await self.bot.send_document(document=file_id, **kwargs)
+            await self.telegram_policy.call_write_rate_limited(lambda: self.bot.send_document(document=file_id, **kwargs), scope_id=chat_id)
         elif kind == "photo":
-            await self.bot.send_photo(photo=file_id, **kwargs)
+            await self.telegram_policy.call_write_rate_limited(lambda: self.bot.send_photo(photo=file_id, **kwargs), scope_id=chat_id)
         elif kind == "video":
-            await self.bot.send_video(video=file_id, **kwargs)
+            await self.telegram_policy.call_write_rate_limited(lambda: self.bot.send_video(video=file_id, **kwargs), scope_id=chat_id)
         elif kind == "audio":
-            await self.bot.send_audio(audio=file_id, **kwargs)
+            await self.telegram_policy.call_write_rate_limited(lambda: self.bot.send_audio(audio=file_id, **kwargs), scope_id=chat_id)
         elif kind == "animation":
-            await self.bot.send_animation(animation=file_id, **kwargs)
+            await self.telegram_policy.call_write_rate_limited(lambda: self.bot.send_animation(animation=file_id, **kwargs), scope_id=chat_id)
         else:
             raise ResourcePublishError("This file type cannot be downloaded through Ghostea yet.")

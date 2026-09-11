@@ -511,3 +511,28 @@ create index if not exists idx_ghostea_upload_sessions_user_nonterminal
     on ghostea_upload_sessions(user_id)
     where state not in ('cancelled', 'expired');
 
+
+-- ============================================================
+-- PHASE 11 — 50K+ Load & Scale Hardening
+-- ============================================================
+-- These are additive, idempotent indexes. No destructive migration.
+-- They target the hot paths used by moderation history, user lookup,
+-- topic resolution, and dashboard resource monitoring.
+
+CREATE INDEX IF NOT EXISTS idx_ghostea_moderation_logs_chat_created
+    ON ghostea_moderation_logs(chat_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ghostea_moderation_logs_chat_user_created
+    ON ghostea_moderation_logs(chat_id, user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ghostea_user_directory_chat_activity
+    ON ghostea_user_directory(chat_id, last_activity DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ghostea_join_events_chat_created
+    ON ghostea_join_events(chat_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ghostea_topic_registry_chat_active_updated
+    ON ghostea_topic_registry(chat_id, is_active, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ghostea_resources_chat_topic_created
+    ON ghostea_resources(chat_id, topic_id, created_at DESC);

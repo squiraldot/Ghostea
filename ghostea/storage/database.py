@@ -3,6 +3,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import time
+import os
+import random
 
 
 class SupabaseREST:
@@ -17,6 +19,8 @@ class SupabaseREST:
     def __init__(self, url: str, key: str):
         self.base = url.rstrip("/") + "/rest/v1"
         self.key = key
+        self.timeout = max(3.0, float(os.getenv("SUPABASE_HTTP_TIMEOUT_SECONDS", "15")))
+        self.read_retries = max(0, min(4, int(os.getenv("SUPABASE_READ_RETRIES", "3"))))
 
     def _request(self, method, table, payload=None, query=None, prefer=None):
         url = f"{self.base}/{table}"
@@ -44,10 +48,10 @@ class SupabaseREST:
 
         # Only retry idempotent reads. Retrying POST/PATCH could duplicate an
         # insert when the server accepted it but the response was lost.
-        attempts = 3 if method.upper() == "GET" else 1
+        attempts = self.read_retries if method.upper() == "GET" else 1
         for attempt in range(attempts):
             try:
-                with urllib.request.urlopen(req, timeout=15) as response:
+                with urllib.request.urlopen(req, timeout=self.timeout) as response:
                     raw = response.read().decode("utf-8")
                     if not raw:
                         return []
@@ -55,7 +59,13 @@ class SupabaseREST:
             except urllib.error.HTTPError as error:
                 transient = error.code == 429 or 500 <= error.code <= 599
                 if transient and attempt + 1 < attempts:
-                    time.sleep(0.25 * (2 ** attempt))
+                    retry_after = error.headers.get("Retry-After")
+                    try:
+                        delay = float(retry_after)
+                    except (TypeError, ValueError):
+                        delay = 0.25 * (2 ** attempt)
+                    delay = min(max(0.05, delay), 5.0)
+                    time.sleep(delay + random.uniform(0, min(0.15, delay / 4)))
                     continue
                 details = error.read().decode("utf-8", errors="replace")
                 raise RuntimeError(
@@ -63,7 +73,13 @@ class SupabaseREST:
                 ) from error
             except (urllib.error.URLError, TimeoutError) as error:
                 if attempt + 1 < attempts:
-                    time.sleep(0.25 * (2 ** attempt))
+                    retry_after = error.headers.get("Retry-After")
+                    try:
+                        delay = float(retry_after)
+                    except (TypeError, ValueError):
+                        delay = 0.25 * (2 ** attempt)
+                    delay = min(max(0.05, delay), 5.0)
+                    time.sleep(delay + random.uniform(0, min(0.15, delay / 4)))
                     continue
                 raise RuntimeError(f"Supabase connection failed: {error}") from error
 
@@ -113,7 +129,7 @@ class SupabaseREST:
         }
         req = urllib.request.Request(url, headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=15) as response:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 content_range = response.headers.get("Content-Range", "")
                 total = content_range.rsplit("/", 1)[-1] if "/" in content_range else "0"
                 return int(total) if total != "*" else 0

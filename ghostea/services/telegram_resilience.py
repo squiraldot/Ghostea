@@ -101,3 +101,30 @@ class TelegramErrorPolicy:
                 )
                 await asyncio.sleep(delay)
         raise last
+
+
+    async def call_write_rate_limited(self, operation, *, scope_id: int | None = None):
+        """Retry a write only when Telegram explicitly says when it may be retried.
+
+        Network/timeouts are deliberately NOT retried because Telegram may have
+        accepted a non-idempotent write before the response was lost.
+        """
+        try:
+            return await operation()
+        except Exception as error:
+            failure = self.classify(error)
+            from ghostea.services.observability import OBSERVABILITY
+            OBSERVABILITY.emit(
+                "telegram_write_error",
+                level="WARNING",
+                kind=failure.kind,
+                error_code=failure.error_code,
+                retry_after=failure.retry_after,
+                scope_id=scope_id,
+            )
+            if failure.kind != "rate_limited" or failure.retry_after is None:
+                raise
+            delay = min(float(failure.retry_after), float(self.max_retry_after))
+            self.note_rate_limit(scope_id, int(delay))
+            await asyncio.sleep(delay)
+            return await operation()

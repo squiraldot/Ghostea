@@ -1,5 +1,6 @@
 import asyncio
 import time
+import os
 from datetime import datetime, timedelta, timezone
 
 from ghostea.config import (
@@ -27,7 +28,7 @@ class Phase3Store:
         self._reputation_locks = {}
         self._cache_locks = {}
         self._cache_ttl = 10.0
-        self._directory_touch_ttl = 60.0
+        self._directory_touch_ttl = max(30.0, float(os.getenv("GHOSTEA_USER_DIRECTORY_TOUCH_SECONDS", "300")))
         self._chat_touch_ttl = 60.0
         self._topic_touch_ttl = 60.0
 
