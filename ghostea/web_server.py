@@ -214,22 +214,84 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return not origin or not request_origin or request_origin == origin
 
     def _verify_and_link_group(self, chat_id, linked_by):
-        """Verify a Telegram chat and explicitly link it for this deployment."""
+        """Verify a Telegram chat and explicitly link it for this deployment.
+
+        Linking is intentionally verified with Telegram's own chat/member
+        methods instead of the general permission cache.  This endpoint is a
+        control-plane operation: it must work even when the chat is already in
+        the registry but has not yet been explicitly linked, and it must return
+        a useful distinction between "bot is not an admin" and an API lookup
+        failure.
+        """
         chat_id = int(chat_id)
-        chat = self._run_async(
-            self.permission_service.error_policy.call_read(
-                self.server.bot.get_chat, chat_id, scope_id=chat_id
+        policy = self.permission_service.error_policy
+
+        try:
+            chat = self._run_async(
+                policy.call_read(
+                    lambda: self.server.bot.get_chat(chat_id),
+                    scope_id=chat_id,
+                )
             )
-        )
+        except Exception as exc:
+            # Telegram's getChat accepts integer chat IDs, including negative
+            # supergroup IDs.  Preserve the actual failure category so the
+            # dashboard does not turn a normal Telegram rejection into the
+            # misleading generic telegram_link_verification_failed message.
+            name = exc.__class__.__name__
+            code = getattr(exc, "code", None)
+            if name == "BadRequest" or code == 400:
+                raise ValueError("telegram_chat_not_found") from exc
+            raise
+
         if getattr(chat, "type", None) not in ("group", "supergroup"):
             raise ValueError("unsupported_chat_type")
-        bot_perms = self._run_async(
-            self.permission_service.bot_permissions(chat, force=True)
-        )
-        if not bot_perms.is_member:
+
+        try:
+            me = self._run_async(
+                policy.call_read(
+                    self.server.bot.get_me,
+                    scope_id=chat_id,
+                )
+            )
+        except Exception as exc:
+            raise PermissionError("telegram_bot_identity_unverifiable") from exc
+
+        try:
+            bot_member = self._run_async(
+                policy.call_read(
+                    lambda: self.server.bot.get_chat_member(chat_id, me.id),
+                    scope_id=chat_id,
+                )
+            )
+        except Exception as exc:
+            # getChatMember is the canonical Bot API check.  If Telegram
+            # rejects that lookup, try the administrator list once.  This
+            # makes linking resilient to edge permission behavior while
+            # remaining fail-closed.
+            try:
+                admins = self._run_async(
+                    policy.call_read(
+                        lambda: self.server.bot.get_chat_administrators(chat_id),
+                        scope_id=chat_id,
+                    )
+                )
+            except Exception as admin_exc:
+                raise PermissionError("telegram_bot_membership_unverifiable") from admin_exc
+            bot_member = next(
+                (member for member in admins
+                 if getattr(getattr(member, "user", None), "id", None) == me.id),
+                None,
+            )
+            if bot_member is None:
+                raise PermissionError("bot_not_in_group") from exc
+
+        status = str(getattr(bot_member, "status", ""))
+        if status in ("left", "kicked"):
             raise PermissionError("bot_not_in_group")
-        if not bot_perms.is_admin:
+        if status not in ("administrator", "creator"):
             raise PermissionError("bot_not_admin")
+
         self._run_async(self.store.link_chat(chat, linked_by=linked_by))
         # Materialize default settings so a newly dashboard-linked group is
         # immediately visible to /api/groups and existing dashboard features.
@@ -654,11 +716,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return _json(self, 409, {"error": "bot_not_in_group"})
                 if code == "bot_not_admin":
                     return _json(self, 409, {"error": "bot_not_admin"})
+                if code in {"telegram_bot_identity_unverifiable", "telegram_bot_membership_unverifiable"}:
+                    return _json(self, 502, {"error": code})
                 return _json(self, 403, {"error": "link_denied"})
             except ValueError as error:
                 msg = str(error)
-                return _json(self, 400, {"error": msg if msg == "unsupported_chat_type" else "invalid_chat_id"})
-            except Exception:
+                if msg == "unsupported_chat_type":
+                    return _json(self, 400, {"error": msg})
+                if msg == "telegram_chat_not_found":
+                    return _json(self, 404, {"error": msg})
+                return _json(self, 400, {"error": "invalid_chat_id"})
+            except Exception as error:
+                # Keep the public response safe, but make the failure useful
+                # in Render logs instead of silently hiding the Telegram cause.
+                self.log_message("Telegram group link verification failed: %s", error)
                 return _json(self, 502, {"error": "telegram_link_verification_failed"})
 
         if parsed.path == "/api/auth/admins":
