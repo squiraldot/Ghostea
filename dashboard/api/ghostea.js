@@ -2,9 +2,18 @@ import crypto from "node:crypto";
 
 const SESSION_TTL = 8 * 60 * 60;
 const ALLOWED_GET = new Set(["/api/health", "/api/groups"]);
+const LOGIN_WINDOW_MS = 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+const loginAttempts = new Map();
 
 function secret(name) {
   return (process.env[name] || "").trim();
+}
+
+function proxySign(value) {
+  const key = secret("GHOSTEA_PROXY_SIGNING_SECRET");
+  if (!key) return "";
+  return crypto.createHmac("sha256", key).update(value).digest("base64url");
 }
 
 function sign(value) {
@@ -42,7 +51,8 @@ function validSession(req) {
 
   const fields = payload.split(":");
   const issuedAt = Number(fields[0]);
-  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > SESSION_TTL * 1000) {
+  const age = Date.now() - issuedAt;
+  if (!Number.isFinite(issuedAt) || age < 0 || age > SESSION_TTL * 1000) {
     return null;
   }
   if (!fields[2] || !fields[3] || !fields[4]) return null;
@@ -64,6 +74,12 @@ function validSession(req) {
 
 function json(res, status, body, extra = {}) {
   res.status(status).setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
   Object.entries(extra).forEach(([k, v]) => res.setHeader(k, v));
   return res.end(JSON.stringify(body));
 }
@@ -96,6 +112,21 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "POST" && req.query.action === "login") {
+    const ip = String(req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || "unknown").split(",")[0].trim().slice(0, 128);
+    const now = Date.now();
+    const attempts = (loginAttempts.get(ip) || []).filter(ts => now - ts < LOGIN_WINDOW_MS);
+    if (attempts.length >= LOGIN_MAX_ATTEMPTS) {
+      loginAttempts.set(ip, attempts);
+      return json(res, 429, { error: "rate_limited" }, { "Retry-After": "60" });
+    }
+    attempts.push(now);
+    loginAttempts.set(ip, attempts);
+    if (loginAttempts.size > 4096) {
+      for (const [key, values] of loginAttempts) {
+        if (!values.length || now - values[values.length - 1] >= LOGIN_WINDOW_MS) loginAttempts.delete(key);
+      }
+    }
+
     const body = await parseBody(req).catch(() => null);
     if (!body || typeof body.username !== "string" || typeof body.password !== "string") {
       return json(res, 400, { error: "credentials_required" });
@@ -200,12 +231,21 @@ export default async function handler(req, res) {
     }
   }
 
+  const proxySecret = secret("GHOSTEA_PROXY_SIGNING_SECRET");
+  if (!proxySecret) {
+    return json(res, 500, { error: "server_not_configured" });
+  }
+
+  const requestId = crypto.randomUUID();
+  const adminContext = [session.admin_id, session.role, session.username, requestId].join("\n");
   const headers = {
     Authorization: `Bearer ${secret("GHOSTEA_API_KEY")}`,
     Accept: "application/json",
     "X-Ghostea-Admin-Id": session.admin_id,
     "X-Ghostea-Role": session.role,
     "X-Ghostea-Username": session.username,
+    "X-Ghostea-Admin-Signature": proxySign(adminContext),
+    "X-Ghostea-Request-Id": requestId,
   };
 
   let body;
@@ -219,8 +259,6 @@ export default async function handler(req, res) {
   }
 
   const isRead = req.method === "GET";
-  const requestId = crypto.randomUUID();
-  headers["X-Ghostea-Request-Id"] = requestId;
 
   async function callUpstream() {
     const controller = new AbortController();

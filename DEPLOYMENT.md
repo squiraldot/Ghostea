@@ -81,6 +81,7 @@ Render environment variables:
 - `SUPABASE_KEY`
 - `DASHBOARD_API_KEY`
 - `DASHBOARD_ORIGIN`
+- `GHOSTEA_PROXY_SIGNING_SECRET` (same strong secret as Vercel; minimum 32 characters)
 
 Rotate any secret that has ever been committed to Git or shared publicly.
 
@@ -319,3 +320,191 @@ H01 also corrects one Telegram contract mismatch in forum topic deletion:
 supergroup `deleteForumTopic` requires the bot's `can_delete_messages`
 administrator right. `can_manage_topics` alone is not sufficient.
 \n\n## Phase H05 — Telegram Error & Rate-Limit Layer\n\nGhostea now centralizes Telegram failure classification and bounded retry policy.\nSafe/idempotent Telegram reads may retry transient network/server/timeout/rate-limit\nfailures using `retry_after` when supplied. Destructive or non-idempotent actions\nremain single-attempt and return explicit H03 action outcomes; they are never blindly\nreplayed after a 429. Rate-limit cooldown state is scoped to the affected chat.\nForbidden/permission failures, bad requests, transient failures, and unknown errors\nremain distinguishable for recovery and observability.\n
+
+## Phase 14 — Production Readiness Gate
+
+Before calling a deployment production-ready:
+
+1. Keep `BOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_KEY`, `DASHBOARD_API_KEY`,
+   `DASHBOARD_ORIGIN`, and `GHOSTEA_PROXY_SIGNING_SECRET` configured.
+2. Use HTTPS for `SUPABASE_URL` and `DASHBOARD_ORIGIN` in production.
+3. Use at least 32 characters for `DASHBOARD_API_KEY` and
+   `GHOSTEA_PROXY_SIGNING_SECRET`.
+4. Keep the proxy signing secret identical between Render and Vercel.
+5. Run `/readiness` as a Telegram administrator command and require every
+   readiness check to pass before production rollout.
+6. Verify `/health` externally and `/api/health` from the authenticated
+   dashboard.
+7. Keep database migrations already applied through the current release.
+8. Do not commit any secret to GitHub.
+
+Phase 14 does not add a database table or migration.
+
+
+## Phase 15 — Own Server Preparation
+
+Phase 15 adds portable self-hosting artifacts without changing the current
+Telegram polling architecture or requiring a local database.
+
+### Docker
+- `Dockerfile`
+- `docker-compose.selfhost.yml`
+- `.dockerignore`
+
+The container runs as an unprivileged user, drops Linux capabilities, uses a
+read-only root filesystem, and persists only `/app/data`.
+
+### Linux/systemd
+- `deploy/systemd/ghostea.service`
+
+Secrets belong in `/etc/ghostea/ghostea.env`, not in the repository.
+
+### TLS/reverse proxy
+- `deploy/nginx/ghostea.conf`
+
+Terminate HTTPS at nginx (or an equivalent reverse proxy) and keep the Python
+port private/firewalled.
+
+Phase 15 does not perform a live server migration. The Vercel dashboard may
+continue to point at the self-hosted backend only when its network/TLS access
+is configured; the actual dashboard migration is Phase 16.
+
+
+## Phase 17 — Self-Hosted PostgreSQL
+
+Self-hosted mode now supports PostgreSQL directly on the VPS.
+
+For a Docker deployment, set in `.env`:
+
+```env
+GHOSTEA_DEPLOYMENT_MODE=self_hosted
+GHOSTEA_DATABASE_PROVIDER=postgresql
+GHOSTEA_STORAGE_PROVIDER=local
+GHOSTEA_DASHBOARD_HOST=vps
+POSTGRES_PASSWORD=<long-random-password>
+```
+
+`docker-compose.selfhost.yml` creates the PostgreSQL 16 service and supplies
+Ghostea with an internal `DATABASE_URL`. The PostgreSQL port is intentionally
+not exposed to the public internet.
+
+For a manually managed PostgreSQL server, set:
+
+```env
+DATABASE_URL=postgresql://ghostea:<password>@127.0.0.1:5432/ghostea
+```
+
+Then apply the canonical schema:
+
+```bash
+export DATABASE_URL='postgresql://...'
+./deploy/selfhost/init-db.sh
+```
+
+No Supabase migration is required for the existing managed deployment.
+
+### Phase 17 verification
+
+1. Managed profile continues to use `SUPABASE_URL` / `SUPABASE_KEY`.
+2. Self-hosted profile uses only PostgreSQL for database access.
+3. `database.sql` applies cleanly to the local PostgreSQL database.
+4. `/health` reports the application as running.
+5. Dashboard/API requests can read and write through the PostgreSQL provider.
+6. Restarting the Ghostea container does not remove PostgreSQL data.
+
+
+## Phase 18 — Self-Hosted Storage
+
+For `self_hosted`, resource files are stored under the persistent
+`/app/data/storage` volume. Run the canonical `database.sql` against the VPS
+PostgreSQL database before using new `ghostea_resources` storage metadata
+columns. Include the storage volume in backups.
+
+Managed Render + Supabase + Vercel behavior is unchanged; no provider switch
+is required.
+
+## Phase 20 — Database Provider System
+
+The database backend is now selected explicitly with `GHOSTEA_DATABASE_PROVIDER`.
+Use `supabase_rest` with `SUPABASE_URL`/`SUPABASE_KEY` for the managed profile and
+`postgresql` with `DATABASE_URL` for self-hosted VPS. No automatic fallback is
+performed. Phase 20 introduces no database schema migration; the existing
+`database.sql` remains canonical for both backends.
+
+
+## Phase 21 — Self-Hosted Dashboard
+
+For an all-in-one VPS deployment use:
+
+```env
+GHOSTEA_DEPLOYMENT_MODE=self_hosted
+GHOSTEA_DATABASE_PROVIDER=postgresql
+GHOSTEA_STORAGE_PROVIDER=local
+GHOSTEA_DASHBOARD_HOST=vps
+DASHBOARD_ORIGIN=https://ghostea.example.com
+GHOSTEA_SESSION_SECRET=<at-least-32-random-characters>
+```
+
+The Python service serves the dashboard at `/` and provides the same-origin
+`/api/ghostea` session/proxy route. Nginx should proxy both `/api/` and `/` to
+`127.0.0.1:10000`; do not expose the Python port directly when TLS is enabled.
+
+Managed Render + Supabase + Vercel deployments are unchanged and do not need
+`GHOSTEA_SESSION_SECRET` on Render.
+
+
+## Phase 23 — Setup Profiles
+
+Use the setup helper before deploying:
+
+```bash
+python scripts/ghostea_setup.py --profile managed --check
+```
+
+or:
+
+```bash
+python scripts/ghostea_setup.py --profile self_hosted --check
+```
+
+`--show-template` prints only a safe configuration template; it never reads or
+prints existing secret values. A failed check exits with status 1.
+
+Phase 23 does not change the database schema.
+
+## Custom provider topology (Phase 24)
+
+The canonical `managed` and `self_hosted` profiles remain strict. Use
+`custom` when infrastructure is mixed, for example Render + PostgreSQL + S3 +
+Vercel or VPS + PostgreSQL + Supabase Storage + VPS dashboard.
+
+```bash
+python scripts/ghostea_setup.py --profile custom \
+  --database postgresql --storage s3 --dashboard vercel --show-template
+python scripts/ghostea_setup.py --profile custom \
+  --database postgresql --storage s3 --dashboard vercel --check
+```
+
+No database migration is required for Phase 24.
+
+
+## Phase 26 — Backup operations
+
+Recommended production schedule: create dated backups outside the application host, verify them, and periodically test restores on an isolated destination. The backup utility does not expose secrets and does not modify Telegram state. See `PHASE26_BACKUP_RESTORE.md`.
+
+
+## Phase 27 — Database Migrations
+See `PHASE27_DATABASE_MIGRATIONS.md`. Use `scripts/ghostea_migrate.py --status` to inspect the schema version; use `--sql` for managed Supabase SQL Editor upgrades and `--apply` for PostgreSQL deployments.
+
+
+## Phase 28 — Telegram webhook delivery
+
+Ghostea supports both `GHOSTEA_UPDATE_MODE=polling` (default) and `GHOSTEA_UPDATE_MODE=webhook`.
+Webhook mode reuses the existing HTTP server port and accepts Telegram POST updates only at the configured `GHOSTEA_WEBHOOK_PATH`, protected by Telegram's `X-Telegram-Bot-Api-Secret-Token` header. Configure a public HTTPS `GHOSTEA_WEBHOOK_URL` whose path exactly matches the webhook path, plus `GHOSTEA_WEBHOOK_SECRET_TOKEN` (1-256 characters). Do not expose the secret in logs or URLs. Render can continue using the existing service HTTP port; VPS/custom deployments use the same endpoint architecture.
+
+
+Phase 28: Telegram webhook delivery is supported alongside polling; see `PHASE28_TELEGRAM_WEBHOOK_HARDENING.md`.
+
+
+## Phase 29 — Background Jobs
+Ghostea includes a durable, bounded background-job worker for deferred maintenance. Existing databases require migration 11; fresh `database.sql` installs include the queue. The worker is enabled by default and can be disabled with `GHOSTEA_JOB_WORKER_ENABLED=false`.

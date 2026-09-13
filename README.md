@@ -917,3 +917,129 @@ are covered by a deterministic offline regression harness.
 The H15 harness never calls Telegram, Supabase, or external services and is
 included in local production-readiness checks. It does not introduce a new
 moderation policy or capability.
+
+
+## Current Roadmap Phase — Phase 14 Production Readiness
+
+The current release includes the production readiness gate for configuration,
+secret strength, HTTPS policies, compatibility checks, adversarial regression,
+and input-boundary regression. No database migration is added by this phase.
+
+
+## Phase 17 — Self-Hosted PostgreSQL Provider
+
+Ghostea now has a direct PostgreSQL database provider for the `self_hosted`
+deployment profile. The existing `managed` profile remains backed by
+Supabase/PostgREST. Both profiles use the same storage/service contract and the
+same canonical `database.sql` schema.
+
+
+## Phase 18 — Self-Hosted Storage
+
+Self-hosted deployments use the VPS filesystem for uploaded resource bytes.
+Managed Render + Supabase + Vercel deployments keep their existing storage
+behavior. Local storage is persistent under `/app/data/storage` in the Docker
+deployment and must be included in VPS backups.
+
+## Phase 20 — Database Provider System (Dual Deployment)
+
+Ghostea now supports a provider-neutral database contract with two first-class
+backends: `supabase_rest` for managed deployments and `postgresql` for
+self-hosted VPS deployments. The business layer uses the same persistence API
+in both modes. PostgreSQL result values are normalized to PostgREST-compatible
+JSON shapes, provider selection is fail-closed, and no Phase 20 SQL migration
+is required.
+
+## Phase 21 — Self-Hosted Dashboard
+
+Ghostea can now run the dashboard from the same self-hosted Python service when
+`GHOSTEA_DASHBOARD_HOST=vps`. The dashboard is same-origin and uses an HttpOnly
+session plus the existing trusted proxy identity boundary. Managed deployments
+continue to use the Vercel dashboard proxy.
+
+
+## Phase 22 — Managed Deployment Profile
+
+The supported managed baseline is Render + Supabase + Vercel:
+- Render hosts the Ghostea bot/API.
+- Supabase provides PostgreSQL through the REST provider and Supabase Storage.
+- Vercel hosts the dashboard through its server-side proxy.
+
+Use:
+`GHOSTEA_DEPLOYMENT_MODE=managed`
+`GHOSTEA_DATABASE_PROVIDER=supabase_rest`
+`GHOSTEA_STORAGE_PROVIDER=supabase`
+`GHOSTEA_DASHBOARD_HOST=vercel`
+
+The self-hosted profile remains VPS + PostgreSQL + local storage + VPS dashboard.
+No database migration is required for Phase 22.
+
+
+## Phase 23 — Deployment Profiles & Setup Helper
+
+Ghostea now has a deterministic setup helper for the two supported deployment
+profiles:
+
+```bash
+python scripts/ghostea_setup.py --profile managed --show-template
+python scripts/ghostea_setup.py --profile managed --check
+python scripts/ghostea_setup.py --profile self_hosted --show-template
+python scripts/ghostea_setup.py --profile self_hosted --check
+```
+
+The helper never prints secret values. It validates profile/provider
+compatibility and required environment variables and returns a non-zero exit
+code when the environment is not ready.
+
+Supported first-class profiles remain:
+
+- `managed`: Render + Supabase + Vercel
+- `self_hosted`: VPS + PostgreSQL + local storage + VPS dashboard
+
+No database migration is introduced by Phase 23.
+
+## Phase 24 — Custom provider deployments
+
+Ghostea also supports a `custom` deployment profile so compute, database,
+storage, and dashboard hosting can be selected independently. For example:
+
+```bash
+python scripts/ghostea_setup.py --profile custom \
+  --database postgresql --storage s3 --dashboard vercel --show-template
+```
+
+Supported providers:
+
+- Database: `supabase_rest` or `postgresql`
+- Storage: `supabase`, `local`, or `s3`
+- Dashboard: `vercel`, `vps`, or `external`
+
+The setup/readiness checks require the environment variables appropriate for
+the selected providers and fail closed when a custom provider tuple is missing.
+
+
+## Phase 25 — Deployment Matrix
+
+Custom deployments are validated across database, storage, and dashboard provider axes. The setup checker performs fail-closed syntax/configuration validation without making network calls. See `PHASE25_DEPLOYMENT_MATRIX.md`.
+
+
+## Phase 26 — Backup, Restore & Disaster Recovery
+
+Ghostea now includes an integrity-checked provider-neutral backup/restore utility. It backs up all Ghostea application tables as compressed JSONL and copies referenced resource objects when storage is configured. Use `python scripts/ghostea_backup.py backup <directory>` and `python scripts/ghostea_backup.py verify <directory>` before restore. Restore is additive/upsert by design; destructive provider-neutral replacement is intentionally unsupported. See `PHASE26_BACKUP_RESTORE.md`.
+
+
+## Phase 27 — Database Migrations
+See `PHASE27_DATABASE_MIGRATIONS.md`. Use `scripts/ghostea_migrate.py --status` to inspect the schema version; use `--sql` for managed Supabase SQL Editor upgrades and `--apply` for PostgreSQL deployments.
+
+
+## Phase 28 — Telegram webhook delivery
+
+Ghostea supports both `GHOSTEA_UPDATE_MODE=polling` (default) and `GHOSTEA_UPDATE_MODE=webhook`.
+Webhook mode reuses the existing HTTP server port and accepts Telegram POST updates only at the configured `GHOSTEA_WEBHOOK_PATH`, protected by Telegram's `X-Telegram-Bot-Api-Secret-Token` header. Configure a public HTTPS `GHOSTEA_WEBHOOK_URL` whose path exactly matches the webhook path, plus `GHOSTEA_WEBHOOK_SECRET_TOKEN` (1-256 characters). Do not expose the secret in logs or URLs. Render can continue using the existing service HTTP port; VPS/custom deployments use the same endpoint architecture.
+
+
+Phase 28: Telegram webhook delivery is supported alongside polling; see `PHASE28_TELEGRAM_WEBHOOK_HARDENING.md`.
+
+
+## Phase 29 — Background Jobs
+Ghostea includes a durable, bounded background-job worker for deferred maintenance. Existing databases require migration 11; fresh `database.sql` installs include the queue. The worker is enabled by default and can be disabled with `GHOSTEA_JOB_WORKER_ENABLED=false`.

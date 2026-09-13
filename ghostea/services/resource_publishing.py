@@ -2,8 +2,10 @@
 import html
 import secrets
 import asyncio
+import io
+import re
 from datetime import datetime, timezone
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.constants import ChatType
 
 from ghostea.services.upload_workflow import UploadMode, UploadState, UploadWorkflowError, MAX_DESCRIPTION_LENGTH
@@ -18,12 +20,13 @@ class ResourcePublishError(RuntimeError):
 
 
 class ResourcePublishingService:
-    def __init__(self, store, workflow, group_authorization, forum_topics, bot):
+    def __init__(self, store, workflow, group_authorization, forum_topics, bot, storage=None):
         self.store = store
         self.workflow = workflow
         self.group_authorization = group_authorization
         self.forum_topics = forum_topics
         self.bot = bot
+        self.storage = storage
         self.telegram_policy = TelegramErrorPolicy()
         self._publish_locks = {}
         self._publish_locks_guard = asyncio.Lock()
@@ -63,10 +66,12 @@ class ResourcePublishingService:
             f"<b>Sub-Flags</b>\n<code>{html.escape(str(p.get('sub_flags') or ''))}</code>"
         )
 
-    async def _save_resource(self, *, resource_id, session, source_kind, source_file_id=None, source_url=None, published_message_id=None, published_extra_message_id=None):
+    async def _save_resource(self, *, resource_id, session, source_kind, source_file_id=None, source_url=None,
+                             published_message_id=None, published_extra_message_id=None,
+                             storage_key=None, storage_filename=None, storage_size=None, storage_content_type=None):
         p = session.payload
         now = datetime.now(timezone.utc).isoformat()
-        return await self.store.create_resource({
+        row = {
             "resource_id": resource_id,
             "workflow_session_id": session.session_id,
             "chat_id": int(session.chat_id),
@@ -84,7 +89,40 @@ class ResourcePublishingService:
             "created_by": int(session.user_id),
             "created_at": now,
             "updated_at": now,
-        })
+        }
+        if storage_key is not None:
+            row.update({
+                "storage_key": storage_key,
+                "storage_filename": storage_filename,
+                "storage_size": storage_size,
+                "storage_content_type": storage_content_type,
+            })
+        return await self.store.create_resource(row)
+
+    @staticmethod
+    def _safe_filename(name, fallback):
+        name = str(name or "").strip().replace("\\", "_").replace("/", "_")
+        name = re.sub(r"[^A-Za-z0-9._ -]", "_", name).strip(" .")
+        return (name[:180] or fallback)
+
+    async def _archive_file(self, *, resource_id, file_id, filename, content_type, kind):
+        if self.storage is None:
+            return None
+        fallback_ext = {"photo": ".jpg", "video": ".mp4", "audio": ".mp3", "animation": ".gif"}.get(kind, ".bin")
+        safe_name = self._safe_filename(filename, f"{resource_id}{fallback_ext}")
+        key = f"resources/{resource_id}/{safe_name}"
+
+        async def fetch():
+            tg_file = await self.bot.get_file(file_id)
+            return await tg_file.download_as_bytearray()
+
+        data = await self.telegram_policy.call_read(fetch)
+        size = len(data)
+        try:
+            stored_key = await asyncio.to_thread(self.storage.put, key, bytes(data), content_type)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise ResourcePublishError("❌ File could not be saved to the configured storage.") from exc
+        return {"key": str(stored_key), "filename": safe_name, "size": size, "content_type": content_type}
 
     async def _publish_lock(self, session_id):
         async with self._publish_locks_guard:
@@ -162,29 +200,101 @@ class ResourcePublishingService:
                 file_id = str(source.get("file_id") or "")
                 if not file_id:
                     raise ResourcePublishError("The uploaded Telegram file is missing.")
+                archived = await self._archive_file(
+                    resource_id=resource_id,
+                    file_id=file_id,
+                    filename=source.get("file_name"),
+                    content_type=source.get("mime_type"),
+                    kind=kind,
+                )
                 markup = InlineKeyboardMarkup([[InlineKeyboardButton("📥 Download", callback_data=f"resource:{resource_id}")]])
                 sent = await self.telegram_policy.call_write_rate_limited(lambda: chat.send_message(self._resource_text(p), parse_mode="HTML", reply_markup=markup, **thread), scope_id=chat.id)
-                await self._save_resource(resource_id=resource_id, session=session, source_kind=kind, source_file_id=file_id, published_message_id=sent.message_id)
+                await self._save_resource(
+                    resource_id=resource_id, session=session, source_kind=kind,
+                    source_file_id=file_id, published_message_id=sent.message_id,
+                    storage_key=archived["key"] if archived else None,
+                    storage_filename=archived["filename"] if archived else None,
+                    storage_size=archived["size"] if archived else None,
+                    storage_content_type=archived["content_type"] if archived else None,
+                )
         else:
             image = p.get("image") or {}
             image_id = str(image.get("file_id") or "")
             if not image_id:
                 raise ResourcePublishError("The flag image is missing.")
+            archived = await self._archive_file(
+                resource_id=resource_id,
+                file_id=image_id,
+                filename=None,
+                content_type="image/jpeg",
+                kind="photo",
+            )
             sent = await self.telegram_policy.call_write_rate_limited(lambda: chat.send_photo(image_id, caption=self._flag_caption(p), parse_mode="HTML", **thread), scope_id=chat.id)
             extra = await self.telegram_policy.call_write_rate_limited(lambda: chat.send_message(html.escape(str(p.get("description") or "")), parse_mode="HTML", **thread), scope_id=chat.id)
-            await self._save_resource(resource_id=resource_id, session=session, source_kind="photo", source_file_id=image_id, published_message_id=sent.message_id, published_extra_message_id=extra.message_id)
+            await self._save_resource(
+                resource_id=resource_id, session=session, source_kind="photo", source_file_id=image_id,
+                published_message_id=sent.message_id, published_extra_message_id=extra.message_id,
+                storage_key=archived["key"] if archived else None,
+                storage_filename=archived["filename"] if archived else None,
+                storage_size=archived["size"] if archived else None,
+                storage_content_type=archived["content_type"] if archived else None,
+            )
 
         await self.store.update_upload_session(session.session_id, state=UploadState.CANCELLED.value)
         return resource_id
 
     async def deliver_download(self, resource_id, user_id):
         row = await self.store.get_resource(resource_id)
-        if not row or not row.get("source_file_id"):
+        if not row:
             raise ResourcePublishError("This download is no longer available.")
-        file_id = str(row["source_file_id"])
+
         kind = str(row.get("source_kind") or "")
         caption = str(row.get("caption") or "")
         chat_id = int(user_id)
+
+        # Self-hosted resources are served from the VPS copy. Managed mode keeps
+        # the existing Telegram file_id path until the remote storage adapter is
+        # introduced.
+        storage_key = row.get("storage_key")
+        if self.storage is not None and storage_key:
+            try:
+                data = await asyncio.to_thread(self.storage.get, str(storage_key))
+            except FileNotFoundError as exc:
+                raise ResourcePublishError("This local file is missing from VPS storage.") from exc
+            filename = str(row.get("storage_filename") or f"{resource_id}.bin")
+            document = InputFile(io.BytesIO(data), filename=filename)
+            if kind == "document":
+                await self.telegram_policy.call_write_rate_limited(
+                    lambda: self.bot.send_document(chat_id=chat_id, document=document, caption=caption or None),
+                    scope_id=chat_id,
+                )
+            elif kind == "photo":
+                await self.telegram_policy.call_write_rate_limited(
+                    lambda: self.bot.send_photo(chat_id=chat_id, photo=document, caption=caption or None),
+                    scope_id=chat_id,
+                )
+            elif kind == "video":
+                await self.telegram_policy.call_write_rate_limited(
+                    lambda: self.bot.send_video(chat_id=chat_id, video=document, caption=caption or None),
+                    scope_id=chat_id,
+                )
+            elif kind == "audio":
+                await self.telegram_policy.call_write_rate_limited(
+                    lambda: self.bot.send_audio(chat_id=chat_id, audio=document, caption=caption or None),
+                    scope_id=chat_id,
+                )
+            elif kind == "animation":
+                await self.telegram_policy.call_write_rate_limited(
+                    lambda: self.bot.send_animation(chat_id=chat_id, animation=document, caption=caption or None),
+                    scope_id=chat_id,
+                )
+            else:
+                raise ResourcePublishError("This file type cannot be downloaded through Ghostea yet.")
+            return
+
+        file_id = str(row.get("source_file_id") or "")
+        if not file_id:
+            raise ResourcePublishError("This download is no longer available.")
         kwargs = {"chat_id": chat_id, "caption": caption} if caption else {"chat_id": chat_id}
         if kind == "document":
             await self.telegram_policy.call_write_rate_limited(lambda: self.bot.send_document(document=file_id, **kwargs), scope_id=chat_id)

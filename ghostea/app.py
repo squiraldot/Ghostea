@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import time
 
 from telegram import Update
 from telegram.ext import (
@@ -21,9 +22,14 @@ from ghostea.config import (
     SPAM_PATTERNS_FILE,
     SUPABASE_KEY,
     SUPABASE_URL,
+    DATABASE_URL,
     TOKEN,
     DEFAULT_SPAM_MESSAGE_LIMIT,
     DEFAULT_SPAM_WINDOW_SECONDS,
+    GHOSTEA_UPDATE_MODE,
+    GHOSTEA_WEBHOOK_URL,
+    GHOSTEA_WEBHOOK_SECRET_TOKEN,
+    GHOSTEA_WEBHOOK_PATH,
 )
 from ghostea.filters.line_loader import LineList
 from ghostea.filters.loader import AbuseFilter
@@ -73,6 +79,8 @@ from ghostea.services.user_management_service import UserManagementService
 from ghostea.services.chat_migration_service import ChatMigrationService
 from ghostea.services.forum_topic_service import ForumTopicService
 from ghostea.services.production_readiness import local_readiness, readiness_summary
+from ghostea.services.deployment_profile import load_deployment_profile
+from ghostea.storage.provider_factory import create_database_provider, create_storage_provider
 from ghostea.services.permission_service import TelegramPermissionService
 from ghostea.services.state_recovery import StateRecoveryService
 from ghostea.services.telegram_resilience import TelegramErrorPolicy
@@ -80,8 +88,8 @@ from ghostea.services.group_authorization import GroupAuthorizationService
 from ghostea.services.upload_workflow import UploadWorkflowEngine
 from ghostea.services.resource_publishing import ResourcePublishingService
 from ghostea.services.concurrency import UpdateDeduplicator
+from ghostea.services.background_jobs import BackgroundJobQueue
 from ghostea.services.observability import OBSERVABILITY, new_request_id, set_request_id, reset_request_id
-from ghostea.storage.database import SupabaseREST
 from ghostea.storage.phase3_store import Phase3Store
 from ghostea.web_server import start_web_server
 
@@ -91,14 +99,42 @@ def create_application():
 
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN is not configured.")
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_KEY are required."
-        )
+    if GHOSTEA_UPDATE_MODE not in {"polling", "webhook"}:
+        raise RuntimeError("GHOSTEA_UPDATE_MODE must be either 'polling' or 'webhook'.")
+    if GHOSTEA_UPDATE_MODE == "webhook":
+        from urllib.parse import urlparse
+        webhook = urlparse(GHOSTEA_WEBHOOK_URL)
+        if webhook.scheme != "https" or not webhook.netloc:
+            raise RuntimeError("GHOSTEA_WEBHOOK_URL must be a valid HTTPS URL when webhook mode is enabled.")
+        if webhook.query or webhook.fragment:
+            raise RuntimeError("GHOSTEA_WEBHOOK_URL must not contain a query string or fragment.")
+        if webhook.path.rstrip("/") != GHOSTEA_WEBHOOK_PATH.rstrip("/"):
+            raise RuntimeError("GHOSTEA_WEBHOOK_URL path must match GHOSTEA_WEBHOOK_PATH.")
+        if not (1 <= len(GHOSTEA_WEBHOOK_SECRET_TOKEN) <= 256):
+            raise RuntimeError("GHOSTEA_WEBHOOK_SECRET_TOKEN must be 1-256 characters in webhook mode.")
+    deployment_profile = load_deployment_profile()
+    profile_errors = deployment_profile.validate()
+    if profile_errors:
+        raise RuntimeError("Invalid Ghostea deployment profile: " + "; ".join(profile_errors))
+    if deployment_profile.database_provider == "supabase_rest" and (not SUPABASE_URL or not SUPABASE_KEY):
+        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY are required for the selected database provider.")
+    if deployment_profile.database_provider == "postgresql" and not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is required for the selected PostgreSQL database provider.")
     if not os.getenv("DASHBOARD_API_KEY", "").strip():
         raise RuntimeError("DASHBOARD_API_KEY is required.")
     if not os.getenv("DASHBOARD_ORIGIN", "").strip():
         raise RuntimeError("DASHBOARD_ORIGIN is required.")
+    proxy_secret = os.getenv("GHOSTEA_PROXY_SIGNING_SECRET", "").strip()
+    if len(proxy_secret) < 32:
+        raise RuntimeError(
+            "GHOSTEA_PROXY_SIGNING_SECRET must be configured with at least 32 characters."
+        )
+    if deployment_profile.dashboard_host == "vps":
+        session_secret = os.getenv("GHOSTEA_SESSION_SECRET", "").strip()
+        if len(session_secret) < 32:
+            raise RuntimeError(
+                "GHOSTEA_SESSION_SECRET must be configured with at least 32 characters for the VPS dashboard."
+            )
 
     readiness = readiness_summary(local_readiness())
     if not readiness["ready"]:
@@ -108,8 +144,9 @@ def create_application():
     spam_patterns = LineList(SPAM_PATTERNS_FILE)
     blocked_domains = LineList(BLOCKED_DOMAINS_FILE)
 
-    db = SupabaseREST(SUPABASE_URL, SUPABASE_KEY)
+    db = create_database_provider(deployment_profile, url=SUPABASE_URL, key=SUPABASE_KEY)
     store = Phase3Store(db)
+    storage = create_storage_provider(deployment_profile, supabase_url=SUPABASE_URL, supabase_key=SUPABASE_KEY)
     protection = ProtectionService(
         spam_patterns,
         blocked_domains,
@@ -168,16 +205,59 @@ def create_application():
             logger.exception("Security recovery failed")
             raise
 
+        try:
+            await background_jobs.enqueue(
+                "expire_upload_sessions",
+                delay_seconds=1,
+                job_id=f"maintenance:expire_upload_sessions:{int(time.time() // 60) + 1}",
+            )
+            await background_jobs.start()
+        except Exception:
+            logger.exception("Background job worker failed to start")
+            raise
+
         # Render health/API server.
         try:
+            loop = asyncio.get_running_loop()
+
+            def enqueue_webhook_update(payload):
+                try:
+                    update = Update.de_json(payload, application.bot)
+                    if update is None:
+                        return False
+                    future = asyncio.run_coroutine_threadsafe(
+                        application.update_queue.put(update), loop
+                    )
+                    future.result(timeout=10)
+                    OBSERVABILITY.emit(
+                        "telegram_webhook_update_accepted",
+                        update_id=getattr(update, "update_id", None),
+                    )
+                    return True
+                except Exception:
+                    logger.exception("Telegram webhook update enqueue failed")
+                    return False
+
             server = start_web_server(
                 store, analytics, application.bot, risk, admins,
-                loop=asyncio.get_running_loop(),
+                loop=loop,
                 production_readiness=application.bot_data.get("production_readiness", {}),
                 permission_service=permission_service,
+                telegram_update_callback=enqueue_webhook_update,
             )
             server.bot = application.bot
             application.bot_data["web_server"] = server
+            if GHOSTEA_UPDATE_MODE == "webhook":
+                await telegram_error_policy.call_write(
+                    application.bot.set_webhook,
+                    url=GHOSTEA_WEBHOOK_URL,
+                    secret_token=GHOSTEA_WEBHOOK_SECRET_TOKEN,
+                    allowed_updates=Update.ALL_TYPES,
+                    drop_pending_updates=False,
+                )
+                logger.info("Telegram webhook configured at %s", GHOSTEA_WEBHOOK_PATH)
+            else:
+                logger.info("Telegram update mode: polling")
             logger.info("Ghostea web server started.")
         except Exception:
             logger.exception("Web server failed to start")
@@ -193,6 +273,16 @@ def create_application():
         if server:
             server.shutdown()
             server.server_close()
+        try:
+            await background_jobs.stop()
+        except Exception:
+            logger.exception("Background job worker shutdown failed")
+        try:
+            close = getattr(db, "close", None)
+            if close:
+                await asyncio.to_thread(close)
+        except Exception:
+            logger.exception("Database provider shutdown failed")
 
     application = (
         Application.builder()
@@ -216,7 +306,27 @@ def create_application():
     forum_topics.bot = application.bot
     forum_topics.permission_service = permission_service
     upload_workflow = UploadWorkflowEngine(store, group_authorization, forum_topics, application.bot)
-    resource_publishing = ResourcePublishingService(store, upload_workflow, group_authorization, forum_topics, application.bot)
+    resource_publishing = ResourcePublishingService(store, upload_workflow, group_authorization, forum_topics, application.bot, storage=storage)
+
+    background_jobs = BackgroundJobQueue(store)
+
+    async def expire_upload_sessions_job(_payload):
+        count = await store.expire_upload_sessions(limit=500)
+        # Schedule the next maintenance slot deterministically. If another
+        # process already scheduled it, enqueue() resolves the duplicate ID.
+        slot = int(time.time() // 60) + 1
+        await background_jobs.enqueue(
+            "expire_upload_sessions",
+            delay_seconds=max(1, slot * 60 - time.time()),
+            job_id=f"maintenance:expire_upload_sessions:{slot}",
+        )
+        if count:
+            logger.info("Expired %s upload sessions in background.", count)
+
+    background_jobs.register("expire_upload_sessions", expire_upload_sessions_job)
+
+    application.bot_data["deployment_profile"] = deployment_profile
+    application.bot_data["storage_provider"] = storage
 
     application.bot_data.update({
         "abuse_filter": abuse_filter,
@@ -242,6 +352,7 @@ def create_application():
         "telegram_permissions": permission_service,
         "telegram_error_policy": telegram_error_policy,
         "update_deduplicator": update_deduplicator,
+        "background_jobs": background_jobs,
         "observability": OBSERVABILITY,
     })
 
@@ -377,7 +488,18 @@ def create_application():
 
 def run():
     application = create_application()
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=False,
-    )
+    if GHOSTEA_UPDATE_MODE == "webhook":
+        async def _run_webhook():
+            await application.initialize()
+            await application.start()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await application.stop()
+                await application.shutdown()
+        asyncio.run(_run_webhook())
+    else:
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=False,
+        )

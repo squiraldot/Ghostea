@@ -6,6 +6,8 @@ import time
 import os
 import random
 
+from ghostea.services.observability import OBSERVABILITY
+
 
 class SupabaseREST:
     """
@@ -49,14 +51,33 @@ class SupabaseREST:
         # Only retry idempotent reads. Retrying POST/PATCH could duplicate an
         # insert when the server accepted it but the response was lost.
         attempts = self.read_retries if method.upper() == "GET" else 1
+        started = time.monotonic()
         for attempt in range(attempts):
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as response:
                     raw = response.read().decode("utf-8")
-                    if not raw:
-                        return []
-                    return json.loads(raw)
+                    result = [] if not raw else json.loads(raw)
+                    OBSERVABILITY.observe_duration(
+                        "supabase_request",
+                        time.monotonic() - started,
+                    )
+                    OBSERVABILITY.emit(
+                        "supabase_request",
+                        method=method.upper(),
+                        table=table,
+                        status=int(response.status),
+                        attempt=attempt + 1,
+                    )
+                    return result
             except urllib.error.HTTPError as error:
+                OBSERVABILITY.emit(
+                    "supabase_error",
+                    level="WARNING",
+                    method=method.upper(),
+                    table=table,
+                    status=int(error.code),
+                    attempt=attempt + 1,
+                )
                 transient = error.code == 429 or 500 <= error.code <= 599
                 if transient and attempt + 1 < attempts:
                     retry_after = error.headers.get("Retry-After")
@@ -72,8 +93,16 @@ class SupabaseREST:
                     f"Supabase HTTP {error.code}: {details}"
                 ) from error
             except (urllib.error.URLError, TimeoutError) as error:
+                OBSERVABILITY.emit(
+                    "supabase_error",
+                    level="WARNING",
+                    method=method.upper(),
+                    table=table,
+                    error_type=error.__class__.__name__,
+                    attempt=attempt + 1,
+                )
                 if attempt + 1 < attempts:
-                    retry_after = error.headers.get("Retry-After")
+                    retry_after = getattr(getattr(error, "headers", None), "get", lambda _name: None)("Retry-After")
                     try:
                         delay = float(retry_after)
                     except (TypeError, ValueError):
@@ -138,3 +167,12 @@ class SupabaseREST:
             raise RuntimeError(f"Supabase HTTP {error.code}: {details}") from error
         except urllib.error.URLError as error:
             raise RuntimeError(f"Supabase connection failed: {error}") from error
+
+    def close(self):
+        """HTTP provider has no persistent socket to close."""
+        return None
+
+    def health_check(self):
+        """Perform a lightweight PostgREST table probe for connectivity."""
+        self.select("ghostea_schema_meta", {"select": "id", "limit": "0"})
+        return True

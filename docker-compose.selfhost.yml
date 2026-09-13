@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ghostea
+      POSTGRES_USER: ghostea
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ghostea-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ghostea -d ghostea"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    stop_grace_period: 30s
+
+  ghostea:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      GHOSTEA_DEPLOYMENT_MODE: self_hosted
+      GHOSTEA_DATABASE_PROVIDER: postgresql
+      GHOSTEA_STORAGE_PROVIDER: local
+      GHOSTEA_DASHBOARD_HOST: vps
+      DATABASE_URL: postgresql://ghostea:${POSTGRES_PASSWORD}@postgres:5432/ghostea
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "10000:10000"
+    init: true
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ghostea-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  ghostea-data:
+  ghostea-postgres:

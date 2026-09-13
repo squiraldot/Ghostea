@@ -5,6 +5,7 @@ separate.  Callers can distinguish a successful punishment from a failed or
 unsupported Telegram operation without guessing from exceptions.
 """
 from dataclasses import dataclass
+import time
 from enum import Enum
 
 
@@ -58,6 +59,7 @@ def set_concurrency_gate(gate):
 
 async def execute_action(action: str, operation):
     from ghostea.services.observability import OBSERVABILITY
+    started = time.monotonic()
     try:
         if _CONCURRENCY_GATE is None:
             await operation()
@@ -67,10 +69,18 @@ async def execute_action(action: str, operation):
     except Exception as error:
         status, detail, retry_after = classify_exception(error)
         result = ActionResult(action, status, detail, retry_after)
+        OBSERVABILITY.observe_duration(
+            "telegram_action",
+            time.monotonic() - started,
+        )
         OBSERVABILITY.emit("telegram_action", level="WARNING",
                            action=action, status=result.status.value,
                            detail=detail, retry_after=retry_after)
         return result
     result = ActionResult(action, ActionStatus.SUCCESS)
+    OBSERVABILITY.observe_duration(
+        "telegram_action",
+        time.monotonic() - started,
+    )
     OBSERVABILITY.emit("telegram_action", action=action, status=result.status.value)
     return result

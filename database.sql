@@ -1,6 +1,6 @@
 -- Ghostea database schema
--- Run this once in Supabase SQL Editor.
--- The application uses the server-side SUPABASE_KEY only.
+-- Run this canonical PostgreSQL schema against the selected database. For managed mode, use the Supabase SQL Editor; for self-hosted mode, run it against the VPS PostgreSQL database.
+-- The application uses the server-side SUPABASE_KEY only in managed mode.
 -- Never expose that key in the Vercel browser bundle.
 
 -- Phase 1: canonical chat registry. One row per Telegram chat used by Ghostea.
@@ -476,6 +476,21 @@ create table if not exists ghostea_resources (
         check ((source_file_id is not null and source_url is null) or (source_file_id is null and source_url is not null))
 );
 
+-- Phase 18 — Self-hosted resource storage metadata.
+-- Additive columns let VPS mode keep file bytes locally while managed mode
+-- continues to use Telegram file IDs / existing remote storage behavior.
+alter table if exists ghostea_resources
+    add column if not exists storage_key text;
+
+alter table if exists ghostea_resources
+    add column if not exists storage_filename text;
+
+alter table if exists ghostea_resources
+    add column if not exists storage_size bigint;
+
+alter table if exists ghostea_resources
+    add column if not exists storage_content_type text;
+
 create index if not exists idx_ghostea_resources_target
     on ghostea_resources(chat_id, topic_id, created_at desc);
 create index if not exists idx_ghostea_resources_created_by
@@ -536,3 +551,61 @@ CREATE INDEX IF NOT EXISTS idx_ghostea_topic_registry_chat_active_updated
 
 CREATE INDEX IF NOT EXISTS idx_ghostea_resources_chat_topic_created
     ON ghostea_resources(chat_id, topic_id, created_at DESC);
+
+
+-- ============================================================
+-- PHASE 27 — Versioned database migration ledger
+-- ============================================================
+-- The canonical schema is always created at the latest migration version.
+-- Existing databases upgrade through ghostea/migrations/*.sql instead of
+-- re-running the whole schema file.
+create table if not exists ghostea_schema_migrations (
+    version integer primary key,
+    name text not null,
+    checksum text not null,
+    applied_at timestamptz not null default now()
+);
+
+insert into ghostea_schema_migrations(version, name, checksum)
+values (10, 'schema_migration_ledger', 'b75b790f4f9152c747b1d6427761acbb2732af0195c117a4ad39b4c8a6fbe1c1')
+on conflict (version) do nothing;
+
+update ghostea_schema_meta
+set schema_version = greatest(schema_version, 10)
+where schema_name = 'ghostea';
+
+-- ============================================================
+-- PHASE 29 — Durable background job queue
+-- ============================================================
+create table if not exists ghostea_background_jobs (
+    job_id text primary key,
+    job_type text not null,
+    payload jsonb not null default '{}'::jsonb,
+    status text not null default 'pending'
+        check (status in ('pending','running','succeeded','failed','dead')),
+    attempts integer not null default 0 check (attempts >= 0),
+    max_attempts integer not null default 5 check (max_attempts between 1 and 20),
+    available_at timestamptz not null default now(),
+    locked_by text,
+    locked_at timestamptz,
+    last_error text,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    completed_at timestamptz
+);
+create index if not exists idx_ghostea_background_jobs_ready
+    on ghostea_background_jobs(status, available_at);
+create index if not exists idx_ghostea_background_jobs_locked
+    on ghostea_background_jobs(status, locked_at);
+create index if not exists idx_ghostea_background_jobs_type
+    on ghostea_background_jobs(job_type, created_at desc);
+
+
+-- Phase 29 migration ledger entry.
+insert into ghostea_schema_migrations(version, name, checksum)
+values (11, 'background_jobs', '7d69c9ef246bc233e160ab2d347f35f6ac08d54279d81a31e933828778d88ec0')
+on conflict (version) do nothing;
+
+update ghostea_schema_meta
+set schema_version = greatest(schema_version, 11)
+where schema_name = 'ghostea';

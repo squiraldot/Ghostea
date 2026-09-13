@@ -1,9 +1,15 @@
 import asyncio
+import base64
+import binascii
+import hashlib
+import hmac
 import json
 import os
 import re
 import threading
 import time
+from io import BytesIO
+from pathlib import Path
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -20,6 +26,91 @@ MAX_BODY_BYTES = 32 * 1024
 RATE_WINDOW_SECONDS = 60
 RATE_MAX_REQUESTS = 300
 GET_CACHE_TTL = 5.0
+DASHBOARD_SESSION_TTL_SECONDS = 8 * 60 * 60
+DASHBOARD_STATIC_MAX_BYTES = 2 * 1024 * 1024
+TELEGRAM_WEBHOOK_MAX_BYTES = 1024 * 1024
+DASHBOARD_STATIC_CSP = (
+    "default-src 'self'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src https://fonts.gstatic.com; "
+    "script-src 'self' 'unsafe-inline'; "
+    "connect-src 'self'; "
+    "img-src 'self' data: blob:; "
+    "frame-ancestors 'none'; base-uri 'self'"
+)
+
+
+def _b64encode(value):
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _b64decode(value):
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _dashboard_session_secret():
+    return os.getenv("GHOSTEA_SESSION_SECRET", "").strip().encode("utf-8")
+
+
+def _dashboard_sign(payload):
+    secret = _dashboard_session_secret()
+    if not secret:
+        return ""
+    return _b64encode(hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).digest())
+
+
+def _dashboard_make_session(admin):
+    payload = ":".join((
+        str(int(admin["id"])),
+        str(admin["role"]),
+        str(admin["username"]),
+        str(int(time.time())),
+        _b64encode(os.urandom(18)),
+    ))
+    return f"{_b64encode(payload.encode('utf-8'))}.{_dashboard_sign(payload)}"
+
+
+def _dashboard_session_from_request(handler):
+    secret = _dashboard_session_secret()
+    if not secret:
+        return None
+    cookie = handler.headers.get("Cookie", "")
+    match = re.search(r"(?:^|;\s*)ghostea_session=([^;]+)", cookie)
+    if not match:
+        return None
+    parts = match.group(1).split(".")
+    if len(parts) != 2:
+        return None
+    try:
+        payload = _b64decode(parts[0]).decode("utf-8")
+        fields = payload.split(":")
+        if len(fields) != 5:
+            return None
+        admin_id, role, username, issued_at_raw, _nonce = fields
+        issued_at = int(issued_at_raw)
+        age = int(time.time()) - issued_at
+        if age < 0 or age > DASHBOARD_SESSION_TTL_SECONDS:
+            return None
+        if not re.fullmatch(r"\d+", admin_id) or role not in ("super_admin", "admin", "moderator", "viewer"):
+            return None
+        if not username or len(username) > 128:
+            return None
+        expected = _dashboard_sign(payload)
+        actual = parts[1]
+        if not expected or len(expected) != len(actual):
+            return None
+        if not hmac.compare_digest(expected, actual):
+            return None
+        return {"admin_id": admin_id, "role": role, "username": username}
+    except (ValueError, UnicodeError, binascii.Error):
+        return None
+
+
+def _is_vps_dashboard():
+    return (
+        os.getenv("GHOSTEA_DEPLOYMENT_MODE", "managed").strip().lower() == "self_hosted"
+        and os.getenv("GHOSTEA_DASHBOARD_HOST", "vercel").strip().lower() == "vps"
+    )
 
 
 def _validate_filter_value(filter_type, value):
@@ -39,6 +130,18 @@ def _configured_origin():
 
 
 def _json(handler, status, payload):
+    started = getattr(handler, "_obs_started", None)
+    if started is not None:
+        OBSERVABILITY.observe_duration(
+            "http_request",
+            time.monotonic() - started,
+        )
+        OBSERVABILITY.emit(
+            "http_response",
+            status=int(status),
+            path=urlparse(handler.path).path,
+            method=getattr(handler, "command", ""),
+        )
     body = json.dumps(payload, default=str).encode("utf-8")
     origin = _configured_origin()
     request_origin = handler.headers.get("Origin", "").strip().rstrip("/")
@@ -50,6 +153,8 @@ def _json(handler, status, payload):
     handler.send_header("X-Content-Type-Options", "nosniff")
     handler.send_header("Referrer-Policy", "no-referrer")
     handler.send_header("X-Frame-Options", "DENY")
+    handler.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    handler.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
     # /health is intentionally public. Protected API endpoints only grant
     # CORS to the configured dashboard origin.
@@ -83,6 +188,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     _rate = defaultdict(deque)
     _cache_lock = threading.Lock()
     _cache = {}
+    telegram_update_callback = None
 
     def log_message(self, fmt, *args):
         return
@@ -125,6 +231,157 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     cls._rate.pop(stale_key, None)
             return False
 
+    def _serve_dashboard(self):
+        if not _is_vps_dashboard():
+            return False
+        parsed = urlparse(self.path)
+        if parsed.path not in ("/", "/index.html"):
+            return False
+        root = Path(__file__).resolve().parent.parent / "dashboard"
+        target = root / "index.html"
+        try:
+            body = target.read_bytes()
+        except OSError:
+            return _json(self, 503, {"error": "dashboard_unavailable"})
+        if len(body) > DASHBOARD_STATIC_MAX_BYTES:
+            return _json(self, 500, {"error": "dashboard_too_large"})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        self.send_header("Content-Security-Policy", DASHBOARD_STATIC_CSP)
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _local_dashboard_proxy(self):
+        """Authenticate same-origin VPS dashboard and inject the trusted API identity."""
+        if getattr(self, "_local_dashboard_internal", False) or not _is_vps_dashboard():
+            return False
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/ghostea":
+            return False
+        query = parse_qs(parsed.query)
+        action = query.get("action", [""])[0]
+        if action == "logout" and self.command == "POST":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Set-Cookie", "ghostea_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return True
+        if action == "login" and self.command == "POST":
+            if self._rate_limited(self):
+                return _json(self, 429, {"error": "rate_limited"})
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MAX_BODY_BYTES:
+                    return _json(self, 413, {"error": "payload_too_large"})
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(payload, dict) or not isinstance(payload.get("username"), str) or not isinstance(payload.get("password"), str):
+                    return _json(self, 400, {"error": "credentials_required"})
+                if not _dashboard_session_secret():
+                    return _json(self, 500, {"error": "server_not_configured"})
+                admin = self.admins and self._run_async(self.admins.authenticate(payload.get("username"), payload.get("password")))
+                if not admin:
+                    return _json(self, 401, {"error": "invalid_credentials"})
+                session = _dashboard_make_session(admin)
+                return self._set_dashboard_cookie_and_json(session, admin)
+            except json.JSONDecodeError:
+                return _json(self, 400, {"error": "invalid_json"})
+            except Exception:
+                return _json(self, 500, {"error": "internal_server_error"})
+        session = _dashboard_session_from_request(self)
+        if not session:
+            return _json(self, 401, {"error": "login_required"})
+        requested = query.get("path", [""])[0]
+        if not requested.startswith("/api/") or requested.startswith("/api/ghostea"):
+            return _json(self, 400, {"error": "invalid_path"})
+        if self.command in ("POST", "PATCH"):
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > MAX_BODY_BYTES:
+                return _json(self, 413, {"error": "payload_too_large"})
+            raw = self.rfile.read(length)
+            self.rfile = BytesIO(raw)
+            self.headers["Content-Length"] = str(len(raw))
+        else:
+            self.rfile = BytesIO(b"")
+        self.headers["Authorization"] = f"Bearer {os.getenv('DASHBOARD_API_KEY', '').strip()}"
+        request_id = new_request_id("local")
+        canonical = "\n".join((session["admin_id"], session["role"], session["username"], request_id))
+        self.headers["X-Ghostea-Admin-Id"] = session["admin_id"]
+        self.headers["X-Ghostea-Role"] = session["role"]
+        self.headers["X-Ghostea-Username"] = session["username"]
+        self.headers["X-Ghostea-Request-Id"] = request_id
+        proxy_secret = os.getenv("GHOSTEA_PROXY_SIGNING_SECRET", "").strip().encode("utf-8")
+        if len(proxy_secret) < 32:
+            return _json(self, 500, {"error": "server_not_configured"})
+        self.headers["X-Ghostea-Admin-Signature"] = _b64encode(hmac.new(proxy_secret, canonical.encode("utf-8"), hashlib.sha256).digest())
+        self.path = requested
+        self._local_dashboard_internal = True
+        getattr(self, {"GET": "do_GET", "POST": "do_POST", "PATCH": "do_PATCH", "DELETE": "do_DELETE"}[self.command])()
+        return True
+
+    def _set_dashboard_cookie_and_json(self, session, admin):
+        body = json.dumps({"ok": True, "admin": admin}, default=str).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Set-Cookie", f"ghostea_session={session}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={DASHBOARD_SESSION_TTL_SECONDS}")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _telegram_webhook(self):
+        """Accept Telegram webhook updates on the existing Ghostea HTTP port."""
+        update_mode = os.getenv("GHOSTEA_UPDATE_MODE", "polling").strip().lower()
+        webhook_path = os.getenv("GHOSTEA_WEBHOOK_PATH", "/telegram/webhook").strip() or "/telegram/webhook"
+        expected = os.getenv("GHOSTEA_WEBHOOK_SECRET_TOKEN", "").strip()
+        if update_mode != "webhook":
+            return False
+        parsed = urlparse(self.path)
+        if parsed.path != webhook_path or self.command != "POST":
+            return False
+        supplied = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not expected or not supplied or len(supplied) > 256 or not hmac.compare_digest(supplied, expected):
+            return _json(self, 403, {"error": "forbidden"})
+        content_type = self.headers.get("Content-Type", "")
+        if not content_type.lower().startswith("application/json"):
+            return _json(self, 415, {"error": "json_required"})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            return _json(self, 400, {"error": "invalid_content_length"})
+        if length <= 0 or length > TELEGRAM_WEBHOOK_MAX_BYTES:
+            return _json(self, 413, {"error": "payload_too_large"})
+        try:
+            raw = self.rfile.read(length)
+            payload = json.loads(raw or b"{}")
+            if not isinstance(payload, dict):
+                return _json(self, 400, {"error": "object_required"})
+            callback = type(self).telegram_update_callback
+            if callback is None:
+                return _json(self, 503, {"error": "webhook_not_ready"})
+            accepted = bool(callback(payload))
+            if not accepted:
+                return _json(self, 503, {"error": "update_not_accepted"})
+            return _json(self, 200, {"ok": True})
+        except json.JSONDecodeError:
+            return _json(self, 400, {"error": "invalid_json"})
+        except Exception:
+            OBSERVABILITY.emit("telegram_webhook_error", level="ERROR")
+            return _json(self, 500, {"error": "internal_server_error"})
+
     def do_HEAD(self):
         """Handle HEAD health checks used by monitors such as UptimeRobot.
 
@@ -134,6 +391,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if self._serve_dashboard():
+            return
+        if self._local_dashboard_proxy():
+            return
 
         if path == "/health":
             # Build the same health response headers as GET, but do not write
@@ -204,7 +466,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _authorized(self):
         expected = os.getenv("DASHBOARD_API_KEY", "").strip()
         supplied = self.headers.get("Authorization", "")
-        return bool(expected) and supplied == f"Bearer {expected}"
+        return bool(expected) and bool(supplied) and hmac.compare_digest(supplied, f"Bearer {expected}")
+
+    def _proxy_identity_valid(self):
+        """Verify the Vercel proxy authenticated the dashboard identity.
+
+        The API key authenticates the proxy itself; this separate signature
+        prevents anyone who can replay that key from forging a super-admin
+        identity through X-Ghostea-* headers.
+        """
+        import base64
+
+        secret = os.getenv("GHOSTEA_PROXY_SIGNING_SECRET", "").strip().encode("utf-8")
+        admin_id = self.headers.get("X-Ghostea-Admin-Id", "")
+        role = self.headers.get("X-Ghostea-Role", "")
+        username = self.headers.get("X-Ghostea-Username", "")
+        request_id = self.headers.get("X-Ghostea-Request-Id", "")
+        supplied = self.headers.get("X-Ghostea-Admin-Signature", "")
+        if not secret or not admin_id or not role or not username or not request_id or not supplied:
+            return False
+        if len(admin_id) > 32 or len(role) > 32 or len(username) > 128 or len(request_id) > 128 or len(supplied) > 128:
+            return False
+        canonical = "\n".join((admin_id, role, username, request_id)).encode("utf-8")
+        expected = hmac.new(secret, canonical, hashlib.sha256).digest()
+        try:
+            supplied_bytes = base64.urlsafe_b64decode(supplied + "=" * (-len(supplied) % 4))
+        except Exception:
+            return False
+        return hmac.compare_digest(expected, supplied_bytes)
 
     def _origin_allowed(self):
         origin = _configured_origin()
@@ -363,14 +652,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not self._authorized():
             _json(self, 401, {"error": "unauthorized"})
             return False
+        if not self._proxy_identity_valid():
+            _json(self, 401, {"error": "invalid_proxy_identity"})
+            return False
         return True
 
     def do_GET(self):
+        self._obs_started = time.monotonic()
         _obs_token = set_request_id(new_request_id("http"))
         self._obs_token = _obs_token
         OBSERVABILITY.emit("http_request", method="GET", path=urlparse(self.path).path)
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if self._serve_dashboard():
+            return
+        if self._local_dashboard_proxy():
+            return
 
         if path == "/health":
             return _json(self, 200, {
@@ -706,10 +1004,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return _json(self, 404, {"error": "not_found"})
 
     def do_POST(self):
+        self._obs_started = time.monotonic()
         _obs_token = set_request_id(new_request_id("http"))
         self._obs_token = _obs_token
         OBSERVABILITY.emit("http_request", method="POST", path=urlparse(self.path).path)
         parsed = urlparse(self.path)
+
+        if self._telegram_webhook():
+            return
+
+        if self._local_dashboard_proxy():
+            return
 
         # Vercel authenticates against this server-to-server endpoint.
         if parsed.path == "/api/auth/login":
@@ -717,6 +1022,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return _json(self, 429, {"error": "rate_limited"})
             if not self._authorized() or not self._origin_allowed():
                 return _json(self, 401, {"error": "unauthorized"})
+            if not os.getenv("GHOSTEA_PROXY_SIGNING_SECRET", "").strip():
+                return _json(self, 500, {"error": "server_not_configured"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0 or length > MAX_BODY_BYTES:
@@ -920,9 +1227,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
     def do_DELETE(self):
+        self._obs_started = time.monotonic()
         _obs_token = set_request_id(new_request_id("http"))
         self._obs_token = _obs_token
         OBSERVABILITY.emit("http_request", method="DELETE", path=urlparse(self.path).path)
+        if self._local_dashboard_proxy():
+            return
         if not self._protected():
             return
         parsed = urlparse(self.path)
@@ -960,9 +1270,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
     def do_PATCH(self):
+        self._obs_started = time.monotonic()
         _obs_token = set_request_id(new_request_id("http"))
         self._obs_token = _obs_token
         OBSERVABILITY.emit("http_request", method="PATCH", path=urlparse(self.path).path)
+        if self._local_dashboard_proxy():
+            return
         if not self._protected():
             return
 
@@ -1118,8 +1431,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
 
-def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=None, production_readiness=None, permission_service=None):
-    port = int(os.getenv("PORT", "10000"))
+def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=None, production_readiness=None, permission_service=None, telegram_update_callback=None):
+    from ghostea.config import PORT
+    port = PORT
     DashboardHandler.store = store
     DashboardHandler.analytics = analytics
     DashboardHandler.risk = risk
@@ -1127,6 +1441,7 @@ def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=No
     DashboardHandler.user_management = None
     DashboardHandler.permission_service = permission_service
     DashboardHandler._async_loop = loop
+    DashboardHandler.telegram_update_callback = telegram_update_callback
 
     server = ThreadingHTTPServer(("0.0.0.0", port), DashboardHandler)
     server.production_readiness = production_readiness or {}
