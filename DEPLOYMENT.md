@@ -512,3 +512,14 @@ Ghostea includes a durable, bounded background-job worker for deferred maintenan
 
 ## Phase 30 — Advanced Caching & Performance
 Ghostea uses bounded process-local TTL/LRU caches for hot read-mostly state and dashboard GET responses. Database state remains authoritative; cache settings are `GHOSTEA_CACHE_TTL_SECONDS`, `GHOSTEA_CACHE_MAX_ENTRIES`, `GHOSTEA_DASHBOARD_CACHE_TTL_SECONDS`, and `GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES`.
+
+## Phase 31 — Security Audit & Attack-Surface Hardening
+
+- Vercel `GHOSTEA_API_URL` must be a clean HTTPS origin without embedded credentials, query strings, fragments, or a path prefix.
+- Vercel-to-Render admin identity signatures are bound to HTTP method, request path, request id, and a short-lived millisecond timestamp.
+- Render rejects stale proxy signatures older than 120 seconds and rejects signatures whose method/path does not match the received request.
+- Keep `GHOSTEA_PROXY_SIGNING_SECRET` identical on Vercel and Render and at least 32 characters.
+- Keep `GHOSTEA_SESSION_SECRET` separate from the proxy signing secret; it is required for the VPS dashboard and Vercel dashboard sessions.
+- Admin bootstrap usernames now use the same strict grammar as dashboard admin accounts.
+- Stored scrypt verification parameters are bounded before hashing to prevent resource-exhaustion hashes.
+- No database migration is required for Phase 31.

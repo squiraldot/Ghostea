@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 
 ROLES = ("super_admin", "admin", "moderator", "viewer")
+USERNAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{2,31}")
 
 ROLE_PERMISSIONS = {
     "super_admin": {"read", "moderate", "settings", "manage_admins"},
@@ -35,13 +36,18 @@ def _verify_password(password, encoded):
         algorithm, n, r, p, salt_hex, digest_hex = encoded.split("$")
         if algorithm != "scrypt":
             return False
+        n_value, r_value, p_value = int(n), int(r), int(p)
+        # Bound parameters before invoking scrypt so a tampered stored hash
+        # cannot force unbounded CPU/memory work during authentication.
+        if not (2**10 <= n_value <= 2**18 and 1 <= r_value <= 16 and 1 <= p_value <= 4):
+            return False
         expected = bytes.fromhex(digest_hex)
         actual = hashlib.scrypt(
             password.encode("utf-8"),
             salt=bytes.fromhex(salt_hex),
-            n=int(n),
-            r=int(r),
-            p=int(p),
+            n=n_value,
+            r=r_value,
+            p=p_value,
         )
         return hmac.compare_digest(actual, expected)
     except (ValueError, TypeError):
@@ -69,6 +75,8 @@ class AdminService:
         password = os.getenv("GHOSTEA_ADMIN_PASSWORD", "").strip()
         if not username or not password:
             raise RuntimeError("Super admin bootstrap credentials are not configured.")
+        if not USERNAME_RE.fullmatch(username):
+            raise RuntimeError("GHOSTEA_SUPERADMIN_USERNAME is invalid.")
 
         rows = await self._rows({
             "username": f"eq.{username}",
@@ -190,7 +198,7 @@ class AdminService:
         username = str(username or "").strip().lower()
         role = str(role or "").strip()
         display_name = str(display_name or "").strip()[:100]
-        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,31}", username):
+        if not USERNAME_RE.fullmatch(username):
             raise ValueError("invalid_username")
         if not isinstance(password, str) or not 10 <= len(password) <= 256:
             raise ValueError("invalid_password")

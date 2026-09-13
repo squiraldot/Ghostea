@@ -29,6 +29,7 @@ RATE_WINDOW_SECONDS = 60
 RATE_MAX_REQUESTS = 300
 GET_CACHE_TTL = float(GHOSTEA_DASHBOARD_CACHE_TTL_SECONDS)
 DASHBOARD_SESSION_TTL_SECONDS = 8 * 60 * 60
+PROXY_SIGNATURE_MAX_AGE_SECONDS = 120
 DASHBOARD_STATIC_MAX_BYTES = 2 * 1024 * 1024
 TELEGRAM_WEBHOOK_MAX_BYTES = 1024 * 1024
 DASHBOARD_STATIC_CSP = (
@@ -314,11 +315,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.rfile = BytesIO(b"")
         self.headers["Authorization"] = f"Bearer {os.getenv('DASHBOARD_API_KEY', '').strip()}"
         request_id = new_request_id("local")
-        canonical = "\n".join((session["admin_id"], session["role"], session["username"], request_id))
+        request_timestamp = str(int(time.time() * 1000))
+        requested_path = urlparse(requested).path
+        canonical = "\n".join((self.command, requested_path, session["admin_id"], session["role"], session["username"], request_id, request_timestamp))
         self.headers["X-Ghostea-Admin-Id"] = session["admin_id"]
         self.headers["X-Ghostea-Role"] = session["role"]
         self.headers["X-Ghostea-Username"] = session["username"]
         self.headers["X-Ghostea-Request-Id"] = request_id
+        self.headers["X-Ghostea-Request-Timestamp"] = request_timestamp
         proxy_secret = os.getenv("GHOSTEA_PROXY_SIGNING_SECRET", "").strip().encode("utf-8")
         if len(proxy_secret) < 32:
             return _json(self, 500, {"error": "server_not_configured"})
@@ -473,12 +477,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         role = self.headers.get("X-Ghostea-Role", "")
         username = self.headers.get("X-Ghostea-Username", "")
         request_id = self.headers.get("X-Ghostea-Request-Id", "")
+        request_timestamp = self.headers.get("X-Ghostea-Request-Timestamp", "")
         supplied = self.headers.get("X-Ghostea-Admin-Signature", "")
-        if not secret or not admin_id or not role or not username or not request_id or not supplied:
+        if not secret or not admin_id or not role or not username or not request_id or not request_timestamp or not supplied:
             return False
-        if len(admin_id) > 32 or len(role) > 32 or len(username) > 128 or len(request_id) > 128 or len(supplied) > 128:
+        if len(admin_id) > 32 or len(role) > 32 or len(username) > 128 or len(request_id) > 128 or len(request_timestamp) > 32 or len(supplied) > 128:
             return False
-        canonical = "\n".join((admin_id, role, username, request_id)).encode("utf-8")
+        try:
+            timestamp_ms = int(request_timestamp)
+        except (TypeError, ValueError):
+            return False
+        age = abs(time.time() - (timestamp_ms / 1000.0))
+        if age > PROXY_SIGNATURE_MAX_AGE_SECONDS:
+            return False
+        if self.command not in {"GET", "POST", "PATCH", "DELETE"}:
+            return False
+        pathname = urlparse(self.path).path
+        canonical = "\n".join((self.command, pathname, admin_id, role, username, request_id, request_timestamp)).encode("utf-8")
         expected = hmac.new(secret, canonical, hashlib.sha256).digest()
         try:
             supplied_bytes = base64.urlsafe_b64decode(supplied + "=" * (-len(supplied) % 4))

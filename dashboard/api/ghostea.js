@@ -5,10 +5,24 @@ const ALLOWED_GET = new Set(["/api/health", "/api/groups"]);
 const LOGIN_WINDOW_MS = 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
 const MIN_SECRET_LENGTH = 32;
+const PROXY_SIGNATURE_MAX_AGE_MS = 2 * 60 * 1000;
+const MAX_UPSTREAM_RESPONSE_BYTES = 2 * 1024 * 1024;
 const loginAttempts = new Map();
 
 function secret(name) {
   return (process.env[name] || "").trim();
+}
+
+function validateTarget(raw) {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" || !parsed.hostname) return false;
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) return false;
+    if (parsed.pathname && parsed.pathname !== "/") return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function proxySign(value) {
@@ -51,12 +65,14 @@ function validSession(req) {
   }
 
   const fields = payload.split(":");
+  if (fields.length !== 5) return null;
   const issuedAt = Number(fields[0]);
   const age = Date.now() - issuedAt;
   if (!Number.isFinite(issuedAt) || age < 0 || age > SESSION_TTL * 1000) {
     return null;
   }
-  if (!fields[2] || !fields[3] || !fields[4]) return null;
+  if (!/^\d+$/.test(fields[2]) || !["super_admin", "admin", "moderator", "viewer"].includes(fields[3])) return null;
+  if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(fields[4])) return null;
 
   const expected = sign(payload);
   const actual = parts[1];
@@ -108,7 +124,7 @@ function parseBody(req) {
 
 export default async function handler(req, res) {
   const target = secret("GHOSTEA_API_URL").replace(/\/+$/, "");
-  if (!target || !secret("GHOSTEA_API_KEY")) {
+  if (!validateTarget(target) || !secret("GHOSTEA_API_KEY")) {
     return json(res, 500, { error: "server_not_configured" });
   }
 
@@ -250,7 +266,8 @@ export default async function handler(req, res) {
   }
 
   const requestId = crypto.randomUUID();
-  const adminContext = [session.admin_id, session.role, session.username, requestId].join("\n");
+  const requestTimestamp = Date.now().toString();
+  const adminContext = [req.method, pathname, session.admin_id, session.role, session.username, requestId, requestTimestamp].join("\n");
   const headers = {
     Authorization: `Bearer ${secret("GHOSTEA_API_KEY")}`,
     Accept: "application/json",
@@ -259,6 +276,7 @@ export default async function handler(req, res) {
     "X-Ghostea-Username": session.username,
     "X-Ghostea-Admin-Signature": proxySign(adminContext),
     "X-Ghostea-Request-Id": requestId,
+    "X-Ghostea-Request-Timestamp": requestTimestamp,
   };
 
   let body;
@@ -302,7 +320,26 @@ export default async function handler(req, res) {
       upstream = await callUpstream();
     }
 
-    const text = await upstream.text();
+    const contentLength = Number(upstream.headers.get("content-length") || "0");
+    if (Number.isFinite(contentLength) && contentLength > MAX_UPSTREAM_RESPONSE_BYTES) {
+      return json(res, 502, { error: "upstream_response_too_large" });
+    }
+    const reader = upstream.body?.getReader();
+    let bytes = 0;
+    const chunks = [];
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > MAX_UPSTREAM_RESPONSE_BYTES) {
+          try { await reader.cancel(); } catch {}
+          return json(res, 502, { error: "upstream_response_too_large" });
+        }
+        chunks.push(Buffer.from(value));
+      }
+    }
+    const text = Buffer.concat(chunks).toString("utf8");
     let payload;
     try { payload = JSON.parse(text); }
     catch { payload = { error: "upstream_invalid_response" }; }
