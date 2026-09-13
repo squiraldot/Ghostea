@@ -1,1 +1,0 @@
-"""Versioned Ghostea database migrations."""

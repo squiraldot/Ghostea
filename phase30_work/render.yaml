@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: ghostea
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
-    healthCheckPath: /health
-    autoDeploy: true
