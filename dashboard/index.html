@@ -1098,9 +1098,10 @@ async function createAdmin(){
     $('adminsMessage').textContent='✅ Admin created';await loadAdmins();
   }catch(e){$('adminsMessage').textContent='❌ '+e.message}
 }
-fetch('/api/ghostea?path=%2Fapi%2Fhealth').then(async r=>{
-  if(r.status===401){showLogin();return}
+fetch('/api/ghostea?action=session').then(async r=>{
   if(!r.ok){showLogin();return}
+  const d=await r.json().catch(()=>({authenticated:false}));
+  if(!d.authenticated){showLogin();return}
   try{const me=await api('/api/auth/me');showApp(me.admin)}catch{showLogin()}
 }).catch(showLogin);
 

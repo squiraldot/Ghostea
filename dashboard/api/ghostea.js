@@ -4,6 +4,7 @@ const SESSION_TTL = 8 * 60 * 60;
 const ALLOWED_GET = new Set(["/api/health", "/api/groups"]);
 const LOGIN_WINDOW_MS = 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
+const MIN_SECRET_LENGTH = 32;
 const loginAttempts = new Map();
 
 function secret(name) {
@@ -111,7 +112,19 @@ export default async function handler(req, res) {
     return json(res, 500, { error: "server_not_configured" });
   }
 
+  // Local session probe: determine browser auth state without probing the protected upstream API.
+  // This avoids expected 401 entries on every dashboard page load.
+  if (req.method === "GET" && req.query.action === "session") {
+    const session = validSession(req);
+    return json(res, 200, session
+      ? { authenticated: true, admin: session }
+      : { authenticated: false });
+  }
+
   if (req.method === "POST" && req.query.action === "login") {
+    if (secret("GHOSTEA_SESSION_SECRET").length < MIN_SECRET_LENGTH) {
+      return json(res, 500, { error: "server_not_configured" });
+    }
     const ip = String(req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || "unknown").split(",")[0].trim().slice(0, 128);
     const now = Date.now();
     const attempts = (loginAttempts.get(ip) || []).filter(ts => now - ts < LOGIN_WINDOW_MS);

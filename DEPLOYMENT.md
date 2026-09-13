@@ -81,7 +81,7 @@ Render environment variables:
 - `SUPABASE_KEY`
 - `DASHBOARD_API_KEY`
 - `DASHBOARD_ORIGIN`
-- `GHOSTEA_PROXY_SIGNING_SECRET` (same strong secret as Vercel; minimum 32 characters)
+- `GHOSTEA_PROXY_SIGNING_SECRET` (same strong secret as Vercel; minimum 32 characters) — **Render will refuse to start without it; use the exact same value in Vercel.**
 
 Rotate any secret that has ever been committed to Git or shared publicly.
 
