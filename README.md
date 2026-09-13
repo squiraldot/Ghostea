@@ -1047,3 +1047,7 @@ Phase 28: Telegram webhook delivery is supported alongside polling; see `PHASE28
 
 ## Phase 29 — Background Jobs
 Ghostea includes a durable, bounded background-job worker for deferred maintenance. Existing databases require migration 11; fresh `database.sql` installs include the queue. The worker is enabled by default and can be disabled with `GHOSTEA_JOB_WORKER_ENABLED=false`.
+
+
+## Phase 30 — Advanced Caching & Performance
+Ghostea uses bounded process-local TTL/LRU caches for hot read-mostly state and dashboard GET responses. Database state remains authoritative; cache settings are `GHOSTEA_CACHE_TTL_SECONDS`, `GHOSTEA_CACHE_MAX_ENTRIES`, `GHOSTEA_DASHBOARD_CACHE_TTL_SECONDS`, and `GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES`.

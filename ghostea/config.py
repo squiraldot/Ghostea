@@ -94,6 +94,12 @@ GHOSTEA_JOB_MAX_ATTEMPTS = _env_int("GHOSTEA_JOB_MAX_ATTEMPTS", 5, minimum=1, ma
 GHOSTEA_JOB_BATCH_SIZE = _env_int("GHOSTEA_JOB_BATCH_SIZE", 1, minimum=1, maximum=10)
 GHOSTEA_JOB_PAYLOAD_MAX_BYTES = _env_int("GHOSTEA_JOB_PAYLOAD_MAX_BYTES", 64 * 1024, minimum=1024, maximum=1024 * 1024)
 
+# Phase 30 — bounded process-local caches. Caches never replace durable state.
+GHOSTEA_CACHE_TTL_SECONDS = _env_int("GHOSTEA_CACHE_TTL_SECONDS", 10, minimum=1, maximum=300)
+GHOSTEA_CACHE_MAX_ENTRIES = _env_int("GHOSTEA_CACHE_MAX_ENTRIES", 5000, minimum=100, maximum=100000)
+GHOSTEA_DASHBOARD_CACHE_TTL_SECONDS = _env_int("GHOSTEA_DASHBOARD_CACHE_TTL_SECONDS", 5, minimum=1, maximum=60)
+GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES = _env_int("GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES", 1000, minimum=100, maximum=10000)
+
 # ============================================================
 # PHASE 10 — User management
 # ============================================================

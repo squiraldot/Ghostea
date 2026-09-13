@@ -3,6 +3,7 @@ import time
 import os
 from datetime import datetime, timedelta, timezone
 
+from ghostea.services.cache import TTLCache
 from ghostea.config import (
     DEFAULT_BLOCKED_LINK_ACTION,
     DEFAULT_MAX_WARNINGS,
@@ -10,6 +11,7 @@ from ghostea.config import (
     DEFAULT_SPAM_MESSAGE_LIMIT,
     DEFAULT_SPAM_MUTE_MINUTES,
     DEFAULT_SPAM_WINDOW_SECONDS,
+    GHOSTEA_CACHE_MAX_ENTRIES, GHOSTEA_CACHE_TTL_SECONDS,
 )
 
 
@@ -19,15 +21,15 @@ class Phase3Store:
     def __init__(self, db):
         self.db = db
         self._warning_lock = asyncio.Lock()
-        self._settings_cache = {}
-        self._filters_cache = {}
+        self._settings_cache = TTLCache(GHOSTEA_CACHE_MAX_ENTRIES, GHOSTEA_CACHE_TTL_SECONDS)
+        self._filters_cache = TTLCache(GHOSTEA_CACHE_MAX_ENTRIES, GHOSTEA_CACHE_TTL_SECONDS)
         self._directory_touch = {}
         self._chat_touch = {}
         self._topic_touch = {}
-        self._topic_settings_cache = {}
+        self._topic_settings_cache = TTLCache(GHOSTEA_CACHE_MAX_ENTRIES, GHOSTEA_CACHE_TTL_SECONDS)
         self._reputation_locks = {}
         self._cache_locks = {}
-        self._cache_ttl = 10.0
+        self._cache_ttl = float(GHOSTEA_CACHE_TTL_SECONDS)
         self._directory_touch_ttl = max(30.0, float(os.getenv("GHOSTEA_USER_DIRECTORY_TOUCH_SECONDS", "300")))
         self._chat_touch_ttl = 60.0
         self._topic_touch_ttl = 60.0
@@ -35,11 +37,18 @@ class Phase3Store:
     async def _call(self, fn, *args, **kwargs):
         return await asyncio.to_thread(fn, *args, **kwargs)
 
+    def cache_stats(self):
+        return {
+            "settings": self._settings_cache.stats().__dict__,
+            "filters": self._filters_cache.stats().__dict__,
+            "topic_settings": self._topic_settings_cache.stats().__dict__,
+        }
+
     def invalidate_group_cache(self, chat_id):
         chat_id = int(chat_id)
         self._settings_cache.pop(chat_id, None)
-        for key in list(self._filters_cache):
-            if key[0] == chat_id:
+        for key in list(self._filters_cache._items):
+            if isinstance(key, tuple) and key and key[0] == chat_id:
                 self._filters_cache.pop(key, None)
 
     def clear_runtime_caches(self):
@@ -77,14 +86,14 @@ class Phase3Store:
             self._settings_cache.pop(chat_id, None)
             self._chat_touch.pop(chat_id, None)
             self._directory_touch.pop(chat_id, None)
-            for key in list(self._filters_cache):
-                if key[0] == chat_id:
+            for key in list(self._filters_cache._items):
+                if isinstance(key, tuple) and key and key[0] == chat_id:
                     self._filters_cache.pop(key, None)
             for key in list(self._topic_touch):
                 if key[0] == chat_id:
                     self._topic_touch.pop(key, None)
-            for key in list(self._topic_settings_cache):
-                if key[0] == chat_id:
+            for key in list(self._topic_settings_cache._items):
+                if isinstance(key, tuple) and key and key[0] == chat_id:
                     self._topic_settings_cache.pop(key, None)
             for key in list(self._reputation_locks):
                 if key[0] == chat_id:
@@ -447,8 +456,8 @@ class Phase3Store:
         key = (int(chat_id), int(topic_id))
         now = time.monotonic()
         cached = self._topic_settings_cache.get(key)
-        if cached and cached[0] > now:
-            return dict(cached[1])
+        if cached is not None:
+            return dict(cached)
 
         rows = await self._call(
             self.db.select,
@@ -460,7 +469,7 @@ class Phase3Store:
             },
         )
         value = dict(rows[0].get("settings") or {}) if rows else {}
-        self._topic_settings_cache[key] = (now + self._cache_ttl, value)
+        self._topic_settings_cache.set(key, dict(value))
         return dict(value)
 
     async def update_topic_settings(self, chat_id, topic_id, changes):
@@ -481,10 +490,7 @@ class Phase3Store:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
         )
-        self._topic_settings_cache[(int(chat_id), int(topic_id))] = (
-            time.monotonic() + self._cache_ttl,
-            dict(current),
-        )
+        self._topic_settings_cache.set((int(chat_id), int(topic_id)), dict(current))
         return rows[0] if rows else dict(current)
 
     async def clear_topic_settings(self, chat_id, topic_id, keys=None):
@@ -565,15 +571,15 @@ class Phase3Store:
         chat_id = int(chat_id)
         now = time.monotonic()
         cached = self._settings_cache.get(chat_id)
-        if cached and cached[0] > now:
-            return dict(cached[1])
+        if cached is not None:
+            return dict(cached)
 
         lock = await self._cache_lock(("settings", chat_id))
         async with lock:
             now = time.monotonic()
             cached = self._settings_cache.get(chat_id)
-            if cached and cached[0] > now:
-                return dict(cached[1])
+            if cached is not None:
+                return dict(cached)
 
             rows = await self._call(
                 self.db.select,
@@ -583,7 +589,7 @@ class Phase3Store:
 
             if rows:
                 value = dict(rows[0])
-                self._settings_cache[chat_id] = (time.monotonic() + self._cache_ttl, value)
+                self._settings_cache.set(chat_id, dict(value))
                 return value
 
             defaults = {
@@ -619,7 +625,7 @@ class Phase3Store:
             }
 
             await self._call(self.db.upsert, "ghostea_group_settings", defaults)
-            self._settings_cache[chat_id] = (time.monotonic() + self._cache_ttl, dict(defaults))
+            self._settings_cache.set(chat_id, dict(defaults))
             return defaults
 
     async def update_settings(self, chat_id, changes):
@@ -827,8 +833,8 @@ class Phase3Store:
         key = (int(chat_id), filter_type or "*")
         now = time.monotonic()
         cached = self._filters_cache.get(key)
-        if cached and cached[0] > now:
-            return list(cached[1])
+        if cached is not None:
+            return list(cached)
 
         query = {
             "chat_id": f"eq.{chat_id}",
@@ -843,7 +849,7 @@ class Phase3Store:
             "ghostea_custom_filters",
             query,
         )
-        self._filters_cache[key] = (time.monotonic() + self._cache_ttl, list(rows))
+        self._filters_cache.set(key, list(rows))
         return rows
 
     async def log(

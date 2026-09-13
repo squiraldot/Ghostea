@@ -20,12 +20,14 @@ from ghostea.services.chat_capabilities import (
 )
 from ghostea.services.chat_visibility import visibility_from_registry
 from ghostea.services.observability import OBSERVABILITY, new_request_id, set_request_id, reset_request_id
+from ghostea.services.cache import TTLCache
+from ghostea.config import GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES, GHOSTEA_DASHBOARD_CACHE_TTL_SECONDS
 
 
 MAX_BODY_BYTES = 32 * 1024
 RATE_WINDOW_SECONDS = 60
 RATE_MAX_REQUESTS = 300
-GET_CACHE_TTL = 5.0
+GET_CACHE_TTL = float(GHOSTEA_DASHBOARD_CACHE_TTL_SECONDS)
 DASHBOARD_SESSION_TTL_SECONDS = 8 * 60 * 60
 DASHBOARD_STATIC_MAX_BYTES = 2 * 1024 * 1024
 TELEGRAM_WEBHOOK_MAX_BYTES = 1024 * 1024
@@ -186,8 +188,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     _async_loop = None
     _rate_lock = threading.Lock()
     _rate = defaultdict(deque)
-    _cache_lock = threading.Lock()
-    _cache = {}
+    _cache = TTLCache(GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES, GET_CACHE_TTL)
     telegram_update_callback = None
 
     def log_message(self, fmt, *args):
@@ -439,29 +440,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     @classmethod
     def _cached_json(cls, key):
-        now = time.monotonic()
-        with cls._cache_lock:
-            item = cls._cache.get(key)
-            if item and item[0] > now:
-                return item[1]
-            if item:
-                cls._cache.pop(key, None)
-        return None
+        return cls._cache.get(key)
 
     @classmethod
     def _put_cache(cls, key, payload):
-        with cls._cache_lock:
-            cls._cache[key] = (time.monotonic() + GET_CACHE_TTL, payload)
+        cls._cache.set(key, payload, GET_CACHE_TTL)
         return payload
 
     @classmethod
     def _invalidate_cache(cls, prefix=None):
-        with cls._cache_lock:
-            if prefix is None:
-                cls._cache.clear()
-            else:
-                for key in [k for k in cls._cache if k.startswith(prefix)]:
-                    cls._cache.pop(key, None)
+        if prefix is None:
+            cls._cache.clear()
+        else:
+            cls._cache.invalidate_prefix(prefix)
 
     def _authorized(self):
         expected = os.getenv("DASHBOARD_API_KEY", "").strip()

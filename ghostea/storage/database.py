@@ -21,8 +21,26 @@ class SupabaseREST:
     def __init__(self, url: str, key: str):
         self.base = url.rstrip("/") + "/rest/v1"
         self.key = key
-        self.timeout = max(3.0, float(os.getenv("SUPABASE_HTTP_TIMEOUT_SECONDS", "15")))
-        self.read_retries = max(0, min(4, int(os.getenv("SUPABASE_READ_RETRIES", "3"))))
+        self.timeout = self._env_float("SUPABASE_HTTP_TIMEOUT_SECONDS", 15.0, minimum=3.0, maximum=120.0)
+        self.read_retries = self._env_int("SUPABASE_READ_RETRIES", 3, minimum=0, maximum=4)
+
+    @staticmethod
+    def _env_float(name, default, *, minimum=0.0, maximum=3600.0):
+        try:
+            value = float(os.getenv(name, str(default)).strip())
+        except (TypeError, ValueError):
+            return default
+        if value != value or value in (float("inf"), float("-inf")):
+            return default
+        return max(minimum, min(value, maximum))
+
+    @staticmethod
+    def _env_int(name, default, *, minimum=0, maximum=2**31 - 1):
+        try:
+            value = int(os.getenv(name, str(default)).strip())
+        except (TypeError, ValueError):
+            return default
+        return max(minimum, min(value, maximum))
 
     def _request(self, method, table, payload=None, query=None, prefer=None):
         url = f"{self.base}/{table}"

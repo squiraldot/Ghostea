@@ -226,6 +226,14 @@ class PostgreSQL:
         self._local = threading.local()
         self._lock = threading.RLock()
 
+    @staticmethod
+    def _connect_timeout():
+        try:
+            value = int(os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS", "10").strip())
+        except (TypeError, ValueError):
+            value = 10
+        return max(3, min(value, 120))
+
     def _connect(self):
         try:
             import psycopg
@@ -238,7 +246,7 @@ class PostgreSQL:
             conn = psycopg.connect(
                 self.dsn,
                 autocommit=True,
-                connect_timeout=max(3, int(os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS", "10"))),
+                connect_timeout=self._connect_timeout(),
             )
             self._local.connection = conn
         return conn
