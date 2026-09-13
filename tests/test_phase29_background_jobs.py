@@ -151,3 +151,44 @@ def test_psql_runner_is_available_without_psycopg(monkeypatch):
     assert "postgresql://user:secret@example/db" in calls["cmd"]
     assert calls["kwargs"]["input"] == "select 1;"
     assert calls["kwargs"]["check"] is False
+
+
+def test_psql_status_handles_legacy_db_without_ledger(monkeypatch):
+    import ghostea.services.schema_migrations as sm
+    responses = iter(["t", "9", "f"])
+    monkeypatch.setattr(sm, "_run_psql", lambda *args, **kwargs: next(responses))
+    status = sm.migration_status_psql("postgresql://user:secret@example/db")
+    assert status["current_version"] == 9
+    assert status["pending"] == [10, 11]
+    assert status["ledger_exists"] is False
+    assert status["ready_to_apply"] is True
+
+
+def test_psql_status_detects_checksum_drift(monkeypatch):
+    import ghostea.services.schema_migrations as sm
+    responses = iter(["t", "11", "t", "10|schema_migration_ledger|bad\n11|background_jobs|bad"])
+    monkeypatch.setattr(sm, "_run_psql", lambda *args, **kwargs: next(responses))
+    status = sm.migration_status_psql("postgresql://user:secret@example/db")
+    assert status["checksum_drift"] == [10, 11]
+    assert status["ready_to_apply"] is False
+
+
+def test_psql_migration_path_does_not_need_supabase_credentials(monkeypatch):
+    import ghostea.services.schema_migrations as sm
+    import scripts.ghostea_migrate as cli
+    calls = []
+    monkeypatch.setattr(sm, "migration_status_psql", lambda url: {
+        "current_version": 9, "latest_version": 11, "pending": [10, 11],
+        "ledger_exists": False, "checksum_drift": [], "ready_to_apply": True,
+        "bootstrap_required": False,
+    })
+    monkeypatch.setattr(sm, "apply_with_psql", lambda sql, url: calls.append((sql, url)) or {"applied_via": "psql"})
+    monkeypatch.setattr(cli, "migration_status_psql", sm.migration_status_psql)
+    monkeypatch.setattr(cli, "apply_with_psql", sm.apply_with_psql)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:secret@example/db")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_KEY", raising=False)
+    monkeypatch.setattr("sys.argv", ["ghostea_migrate.py", "--apply-psql"])
+    assert cli.main() == 0
+    assert calls and "Migration 10" in calls[0][0] and "Migration 11" in calls[0][0]
+

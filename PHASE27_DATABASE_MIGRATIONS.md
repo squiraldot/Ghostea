@@ -43,3 +43,16 @@ the current `database.sql` are already at version 10.
 - Checksum drift blocks readiness.
 - Do not edit an already-applied migration; create the next numbered migration.
 - Always back up before applying production migrations.
+
+
+## Android / Termux migration
+
+For Managed Supabase testing on Android, the migration CLI supports the local PostgreSQL `psql` client and does not require the Python `psycopg` package or Supabase credentials for the direct PostgreSQL execution path. Set `DATABASE_URL` to the Supabase PostgreSQL connection string and run:
+
+```text
+python scripts/ghostea_migrate.py --status
+python scripts/ghostea_migrate.py --apply-psql
+python scripts/ghostea_migrate.py --status
+```
+
+The psql path reads the current schema version directly from PostgreSQL and applies only pending migrations. Existing Phase 26 databases at version 9 are expected to apply migrations 10 and 11 in order.

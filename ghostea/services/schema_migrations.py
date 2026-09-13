@@ -76,7 +76,8 @@ def migration_status(provider) -> dict[str, Any]:
         "pending": pending,
         "ledger_exists": ledger_exists,
         "checksum_drift": sorted(set(drift)),
-        "ready_to_apply": not drift and (ledger_exists or current == 0),
+        "ready_to_apply": not drift and (ledger_exists or current < 10),
+        "bootstrap_required": not ledger_exists and current >= 10,
     }
 
 def migration_plan(provider) -> list[Migration]:
@@ -104,6 +105,78 @@ def render_sql(migrations) -> str:
         ]
     return "\n".join(chunks)+"\n"
 
+
+
+def _run_psql(database_url: str, *, sql: str) -> str:
+    if not isinstance(database_url, str) or not database_url.strip():
+        raise ValueError("DATABASE_URL is required for psql migration execution")
+    psql = shutil.which("psql")
+    if not psql:
+        raise RuntimeError("psql command not found; install the PostgreSQL client first")
+    completed = subprocess.run(
+        [psql, "--no-psqlrc", database_url.strip(), "-v", "ON_ERROR_STOP=1", "-At", "-c", sql],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "psql query failed").strip()
+        raise RuntimeError(f"psql query failed: {detail[-4000:]}")
+    return (completed.stdout or "").strip()
+
+
+def migration_status_psql(database_url: str) -> dict[str, Any]:
+    """Read migration state through the local psql client without psycopg.
+
+    This path is intended for Android/Termux and never requires the Python
+    PostgreSQL driver. Missing legacy ledger/meta tables are handled safely.
+    """
+    migrations = load_migrations()
+    meta_table = _run_psql(
+        database_url,
+        sql="select to_regclass('public.ghostea_schema_meta') is not null;",
+    ).lower() == "t"
+    if meta_table:
+        raw = _run_psql(
+            database_url,
+            sql="select coalesce((select schema_version from ghostea_schema_meta where schema_name='ghostea' limit 1),0);",
+        )
+        current = int(raw or 0)
+    else:
+        current = 0
+
+    ledger_exists = _run_psql(
+        database_url,
+        sql="select to_regclass('public.ghostea_schema_migrations') is not null;",
+    ).lower() == "t"
+    rows = []
+    if ledger_exists:
+        raw = _run_psql(
+            database_url,
+            sql="select version, name, checksum from ghostea_schema_migrations order by version;",
+        )
+        for line in raw.splitlines():
+            parts = line.split("|", 2)
+            if len(parts) == 3:
+                rows.append({"version": int(parts[0]), "name": parts[1], "checksum": parts[2]})
+    known = {m.version: m for m in migrations}
+    drift = []
+    for row in rows:
+        expected = known.get(row["version"])
+        if expected is None or row.get("checksum") != expected.checksum:
+            drift.append(row["version"])
+    if current > max((m.version for m in migrations), default=current):
+        drift.append(current)
+    pending = [m.version for m in migrations if m.version > current]
+    return {
+        "current_version": current,
+        "latest_version": max((m.version for m in migrations), default=current),
+        "pending": pending,
+        "ledger_exists": ledger_exists,
+        "checksum_drift": sorted(set(drift)),
+        "ready_to_apply": not drift and (ledger_exists or current < 10),
+        "bootstrap_required": not ledger_exists and current >= 10,
+    }
 
 def apply_with_psql(sql: str, database_url: str) -> dict[str, Any]:
     """Execute a rendered migration plan with the local `psql` CLI.

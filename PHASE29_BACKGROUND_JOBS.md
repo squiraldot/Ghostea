@@ -32,5 +32,6 @@ Optional settings:
 - `GHOSTEA_JOB_BATCH_SIZE=1`
 - `GHOSTEA_JOB_PAYLOAD_MAX_BYTES=65536`
 
-Existing databases must run migration 11. Fresh installs using `database.sql` are
-created with the queue table and schema version 11.
+Existing databases must run the pending migrations through version 11. A Phase 26 database at version 9 will apply migrations 10 and 11 in order. Fresh installs using `database.sql` are created with the queue table and schema version 11.
+
+For Android/Termux managed testing, use the local `psql` client via `python scripts/ghostea_migrate.py --apply-psql`; the migration execution path does not require installing `psycopg[binary]`.

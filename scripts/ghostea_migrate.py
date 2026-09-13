@@ -10,7 +10,7 @@ import argparse, json, os, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ghostea.services.schema_migrations import migration_status, migration_plan, render_sql, apply_postgresql, apply_with_psql
+from ghostea.services.schema_migrations import migration_status, migration_status_psql, migration_plan, render_sql, apply_postgresql, apply_with_psql, load_migrations
 from ghostea.services.deployment_profile import load_deployment_profile
 from ghostea.storage.provider_factory import create_database_provider
 
@@ -24,6 +24,30 @@ def main():
     group.add_argument("--dry-run", action="store_true")
     group.add_argument("--apply-psql", action="store_true", help="Apply the pending SQL with the local psql client (Termux-friendly)")
     args=parser.parse_args()
+
+    # The psql path is intentionally independent of the Python database
+    # providers. This makes it usable on Android/Termux where psycopg binary
+    # wheels may be unavailable, and avoids requiring SUPABASE_KEY for a
+    # direct PostgreSQL migration.
+    if args.apply_psql:
+        database_url = os.getenv("DATABASE_URL", "")
+        status = migration_status_psql(database_url)
+        if status["checksum_drift"]:
+            raise RuntimeError(
+                "Migration checksum drift detected; refusing to apply: "
+                + ", ".join(str(v) for v in status["checksum_drift"])
+            )
+        if not status["ready_to_apply"]:
+            raise RuntimeError(
+                "Database is not ready for migration: " + json.dumps(status, sort_keys=True)
+            )
+        plan = [m for m in load_migrations() if m.version > status["current_version"]]
+        sql = render_sql(plan)
+        result = apply_with_psql(sql, database_url)
+        result["applied"] = [m.version for m in plan]
+        result["pending"] = []
+        print(json.dumps(result, indent=2))
+        return 0
 
     profile=load_deployment_profile(os.environ)
     provider=create_database_provider(
@@ -44,16 +68,6 @@ def main():
             return 0
         if args.dry_run:
             print(json.dumps(apply_postgresql(provider, dry_run=True), indent=2))
-            return 0
-        if args.apply_psql:
-            sql = render_sql(plan)
-            if not plan:
-                print(json.dumps({"applied_via": "psql", "applied": [], "pending": []}, indent=2))
-                return 0
-            result = apply_with_psql(sql, os.getenv("DATABASE_URL", ""))
-            result["applied"] = [m.version for m in plan]
-            result["pending"] = []
-            print(json.dumps(result, indent=2))
             return 0
         result=apply_postgresql(provider)
         print(json.dumps(result, indent=2))
