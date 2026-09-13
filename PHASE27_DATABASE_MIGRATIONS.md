@@ -23,6 +23,7 @@ python scripts/ghostea_migrate.py --status
 python scripts/ghostea_migrate.py --plan
 python scripts/ghostea_migrate.py --sql > phase27_migrations.sql
 python scripts/ghostea_migrate.py --dry-run
+python scripts/ghostea_migrate.py --apply-psql  # Android/Termux with psql
 python scripts/ghostea_migrate.py --apply
 ```
 
@@ -31,7 +32,7 @@ REST-only provider instead of pretending DDL was executed.
 
 ## Current version
 
-The canonical schema is version **10**. Existing Phase 26 databases normally
+The canonical schema is version **11**. Existing Phase 26 databases normally
 report version 9 and have migration 10 pending. Fresh databases created from
 the current `database.sql` are already at version 10.
 

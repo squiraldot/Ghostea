@@ -1029,7 +1029,11 @@ Ghostea now includes an integrity-checked provider-neutral backup/restore utilit
 
 
 ## Phase 27 — Database Migrations
-See `PHASE27_DATABASE_MIGRATIONS.md`. Use `scripts/ghostea_migrate.py --status` to inspect the schema version; use `--sql` for managed Supabase SQL Editor upgrades and `--apply` for PostgreSQL deployments.
+See `PHASE27_DATABASE_MIGRATIONS.md`. The canonical schema is version 11.
+Use `scripts/ghostea_migrate.py --status` to inspect the schema version.
+Managed Supabase upgrades can use `--sql` for review or `--apply-psql` from
+Android/Termux when the PostgreSQL client is installed; PostgreSQL deployments
+can use `--apply`.
 
 
 ## Phase 28 — Telegram webhook delivery

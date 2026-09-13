@@ -22,3 +22,14 @@ create index if not exists idx_ghostea_background_jobs_locked
     on ghostea_background_jobs(status, locked_at);
 create index if not exists idx_ghostea_background_jobs_type
     on ghostea_background_jobs(job_type, created_at desc);
+
+-- Record the migration atomically so the schema version cannot drift from
+-- the durable migration ledger. The checksum literal is normalized by the
+-- migration catalog when calculating the expected checksum.
+insert into ghostea_schema_migrations(version, name, checksum)
+values (11, 'background_jobs', 'ee22b8a7923e7c811328fc86ae12450c733317bdc8e4b8d8517a62095aa89286')
+on conflict (version) do nothing;
+
+update ghostea_schema_meta
+set schema_version = greatest(schema_version, 11)
+where schema_name = 'ghostea';

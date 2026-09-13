@@ -603,7 +603,7 @@ create index if not exists idx_ghostea_background_jobs_type
 
 -- Phase 29 migration ledger entry.
 insert into ghostea_schema_migrations(version, name, checksum)
-values (11, 'background_jobs', '7d69c9ef246bc233e160ab2d347f35f6ac08d54279d81a31e933828778d88ec0')
+values (11, 'background_jobs', 'ee22b8a7923e7c811328fc86ae12450c733317bdc8e4b8d8517a62095aa89286')
 on conflict (version) do nothing;
 
 update ghostea_schema_meta

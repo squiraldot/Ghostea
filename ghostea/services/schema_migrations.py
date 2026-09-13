@@ -6,12 +6,16 @@ manual execution in the provider's SQL editor.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-import hashlib, re
+import hashlib, re, shutil, subprocess
 from pathlib import Path
 from typing import Any
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
-_CHECKSUM_RE = re.compile(r"(values\s*\(\s*10\s*,\s*'schema_migration_ledger'\s*,\s*)'[^']*'", re.I)
+_CHECKSUM_RE = re.compile(
+    r"(insert\s+into\s+ghostea_schema_migrations\s*\(\s*version\s*,\s*name\s*,\s*checksum\s*\)\s*"
+    r"values\s*\(\s*\d+\s*,\s*'[^']*'\s*,\s*)'[^']*'",
+    re.I,
+)
 
 @dataclass(frozen=True)
 class Migration:
@@ -89,10 +93,40 @@ def render_sql(migrations) -> str:
     migrations=tuple(migrations)
     if not migrations:
         return "-- Ghostea schema is already at the latest migration version.\n"
-    chunks=["-- Ghostea Phase 27 migration plan. Review before execution."]
+    chunks=["-- Ghostea migration plan. Review before execution."]
     for m in migrations:
-        chunks += [f"\n-- Migration {m.version}: {m.name} (sha256:{m.checksum})", "begin;", m.sql.rstrip(), "commit;"]
+        chunks += [
+            f"\n-- Migration {m.version}: {m.name} (sha256:{m.checksum})",
+            "begin;",
+            "select pg_advisory_xact_lock(hashtext('ghostea:schema:migrations'));",
+            m.sql.rstrip(),
+            "commit;",
+        ]
     return "\n".join(chunks)+"\n"
+
+
+def apply_with_psql(sql: str, database_url: str) -> dict[str, Any]:
+    """Execute a rendered migration plan with the local `psql` CLI.
+
+    This is useful on Android/Termux where a psycopg binary wheel may not be
+    available. The URL is passed directly to psql without shell expansion.
+    """
+    if not isinstance(database_url, str) or not database_url.strip():
+        raise ValueError("DATABASE_URL is required for psql migration execution")
+    psql = shutil.which("psql")
+    if not psql:
+        raise RuntimeError("psql command not found; install the PostgreSQL client first")
+    completed = subprocess.run(
+        [psql, "--no-psqlrc", database_url.strip(), "-v", "ON_ERROR_STOP=1", "-f", "-"],
+        input=sql,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "psql migration failed").strip()
+        raise RuntimeError(f"psql migration failed: {detail[-4000:]}")
+    return {"applied_via": "psql", "stdout": (completed.stdout or "").strip()[-4000:]}
 
 def apply_postgresql(provider, *, dry_run=False) -> dict[str, Any]:
     """Apply pending migrations atomically, with an advisory lock.

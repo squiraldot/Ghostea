@@ -126,9 +126,28 @@ def test_concurrent_claim_only_one_wins():
     asyncio.run(run())
 
 def test_migration_checksum_and_schema_version():
-    import hashlib
-    migration = (ROOT / "ghostea" / "migrations" / "0011_background_jobs.sql").read_bytes()
-    assert hashlib.sha256(migration).hexdigest() == "7d69c9ef246bc233e160ab2d347f35f6ac08d54279d81a31e933828778d88ec0"
+    from ghostea.services.schema_migrations import load_migrations
+    migration = (ROOT / "ghostea" / "migrations" / "0011_background_jobs.sql").read_text()
+    catalog = {m.version: m for m in load_migrations()}
+    assert catalog[11].checksum == "ee22b8a7923e7c811328fc86ae12450c733317bdc8e4b8d8517a62095aa89286"
+    assert f"values (11, 'background_jobs', '{catalog[11].checksum}')" in migration
     schema = (ROOT / "database.sql").read_text()
-    assert "values (11, 'background_jobs'" in schema
+    assert f"values (11, 'background_jobs', '{catalog[11].checksum}')" in schema
     assert "greatest(schema_version, 11)" in schema
+
+
+def test_psql_runner_is_available_without_psycopg(monkeypatch):
+    import ghostea.services.schema_migrations as sm
+    calls = {}
+    monkeypatch.setattr(sm.shutil, "which", lambda name: "/data/data/com.termux/files/usr/bin/psql")
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["kwargs"] = kwargs
+        return type("Result", (), {"returncode": 0, "stdout": "ok\\n", "stderr": ""})()
+    monkeypatch.setattr(sm.subprocess, "run", fake_run)
+    result = sm.apply_with_psql("select 1;", "postgresql://user:secret@example/db")
+    assert result["applied_via"] == "psql"
+    assert calls["cmd"][0].endswith("/psql")
+    assert "postgresql://user:secret@example/db" in calls["cmd"]
+    assert calls["kwargs"]["input"] == "select 1;"
+    assert calls["kwargs"]["check"] is False
