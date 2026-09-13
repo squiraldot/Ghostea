@@ -1,0 +1,1 @@
+# Ghostea project root.

@@ -1,0 +1,1340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0b0d10">
+<title>Ghostea Admin 👻</title>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+
+:root{
+  color-scheme:dark;
+  --bg:#07090c;
+  --bg-2:#0a0d11;
+  --surface:#0d1117;
+  --surface-2:#11161e;
+  --surface-3:#151b24;
+  --surface-4:#1a212c;
+  --line:#222a35;
+  --line-2:#2d3745;
+  --text:#f4f7fb;
+  --muted:#8b96a6;
+  --muted-2:#626d7c;
+  --accent:#b4f56a;
+  --accent-2:#91dc45;
+  --accent-soft:rgba(180,245,106,.10);
+  --accent-border:rgba(180,245,106,.28);
+  --danger:#ff7180;
+  --danger-soft:rgba(255,113,128,.10);
+  --warn:#f5c85b;
+  --blue:#79aaff;
+  --shadow:0 18px 55px rgba(0,0,0,.25);
+  --shadow-sm:0 8px 24px rgba(0,0,0,.18);
+  --r-xl:22px;
+  --r-lg:16px;
+  --r-md:12px;
+  --r-sm:9px;
+  --ease:180ms cubic-bezier(.2,.75,.2,1);
+}
+*{box-sizing:border-box}
+html{min-width:320px;scroll-behavior:smooth}
+body{
+  margin:0;min-height:100vh;
+  color:var(--text);
+  font:14px/1.55 "DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  letter-spacing:.002em;
+  background:
+    radial-gradient(800px 500px at 82% -8%,rgba(180,245,106,.045),transparent 68%),
+    radial-gradient(900px 600px at 0% 0%,rgba(93,119,160,.07),transparent 66%),
+    var(--bg);
+}
+body:before{
+  content:"";position:fixed;inset:0;pointer-events:none;opacity:.24;
+  background-image:linear-gradient(rgba(255,255,255,.015) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.015) 1px,transparent 1px);
+  background-size:48px 48px;
+  mask-image:linear-gradient(to bottom,#000,transparent 78%);
+}
+button,input,select{font:inherit}
+button{cursor:pointer}
+button,.navbtn,input,select{transition:color var(--ease),background var(--ease),border-color var(--ease),box-shadow var(--ease),transform var(--ease),opacity var(--ease)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hidden{display:none!important}.muted{color:var(--muted)}.error{color:var(--danger)}.ok{color:var(--accent)}
+main{
+  width:100%;max-width:1720px;min-height:100svh;
+  margin:auto;padding:24px 28px 40px
+}
+#app{min-width:0}
+.brand{min-width:0}
+.brand h1{
+  margin:0;font-family:"Space Grotesk",sans-serif;font-size:24px;line-height:1.08;
+  letter-spacing:-.045em;font-weight:700
+}
+.brand p{margin:6px 0 0;color:var(--muted);font-size:12px}
+.brand-mark{
+  display:grid;place-items:center;width:40px;height:40px;flex:none;
+  border:1px solid var(--accent-border);border-radius:12px;
+  background:linear-gradient(145deg,rgba(180,245,106,.16),rgba(180,245,106,.035));
+  color:var(--accent);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)
+}
+.brand-mark svg{width:22px;height:22px}
+.login{
+  width:min(100%,460px);
+  margin:clamp(24px,8vh,84px) auto;
+  padding:clamp(22px,5vw,34px);
+  position:relative;
+  overflow:hidden;
+  height:auto!important;
+  min-height:0!important;
+  border-radius:24px!important;
+}
+.login:before{
+  content:"";position:absolute;inset:0 0 auto;height:2px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.8
+}
+.login:after{
+  content:"";position:absolute;width:260px;height:260px;right:-150px;top:-170px;
+  border-radius:50%;background:rgba(180,245,106,.06);filter:blur(10px);pointer-events:none
+}
+.login .brand{display:flex;gap:13px;align-items:flex-start;min-width:0}
+.login .brand h1{font-size:30px}.login .brand p{font-size:13px;margin-top:8px}
+.login .field{
+  display:flex!important;
+  flex:0 0 auto!important;
+  width:100%;
+  min-width:0!important;
+  height:auto!important;
+  margin-top:20px!important;
+}
+.login .row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-top:18px!important;
+}
+.login .row .error{flex:1 1 180px;min-width:0}
+.login .primary{min-width:104px}
+.card{
+  margin:12px 0;padding:20px;
+  border:1px solid var(--line);border-radius:var(--r-lg);
+  background:linear-gradient(180deg,rgba(17,22,30,.97),rgba(11,15,21,.97));
+  box-shadow:var(--shadow)
+}
+#app>.topbar{
+  position:sticky;top:0;z-index:40;
+  margin:-24px -28px 24px;padding:15px 28px;
+  border-bottom:1px solid rgba(45,55,69,.7);
+  background:rgba(7,9,12,.82);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)
+}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:20px}
+.topbar .brand{display:flex;align-items:center;gap:12px}
+.topbar .brand-mark{width:38px;height:38px;border-radius:11px}
+.topbar .row{justify-content:flex-end}
+.topbar #status{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid var(--line);background:rgba(17,22,30,.8);border-radius:999px;color:var(--muted)}
+.layout{display:grid;grid-template-columns:250px minmax(0,1fr);gap:22px;align-items:start}
+.sidebar{
+  position:sticky;top:82px;height:max-content;padding:8px;
+  border:1px solid var(--line);border-radius:18px;
+  background:rgba(12,16,22,.88);box-shadow:var(--shadow-sm)
+}
+.sidebar:before{
+  content:"WORKSPACE";display:block;padding:9px 12px 7px;
+  color:var(--muted-2);font-size:9px;font-weight:700;letter-spacing:.14em
+}
+.navbtn{
+  display:flex;width:100%;align-items:center;gap:11px;min-height:44px;
+  margin:3px 0;padding:10px 12px;text-align:left;
+  color:#8f9aaa;background:transparent;border:1px solid transparent;border-radius:11px
+}
+.navbtn:hover{color:var(--text);background:#151b24;border-color:#252f3c;transform:translateX(1px)}
+.navbtn.active{
+  color:#eaffd9;background:linear-gradient(90deg,rgba(180,245,106,.13),rgba(180,245,106,.035));
+  border-color:rgba(180,245,106,.22);box-shadow:inset 3px 0 0 var(--accent)
+}
+.nav-icon{width:19px;height:19px;display:grid;place-items:center;flex:none;color:currentColor}
+.nav-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nav-label{font-size:13px;font-weight:600}
+.content{min-width:0}
+.section{display:none;animation:sectionIn .2s ease-out}
+.section.active{display:block}
+@keyframes sectionIn{from{opacity:.55;transform:translateY(4px)}to{opacity:1;transform:none}}
+.section>.card:first-child{margin-top:0}
+.section-title{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}
+.section-title h2,.section-title h3{
+  margin:0;font-family:"Space Grotesk",sans-serif;letter-spacing:-.035em
+}
+.section-title h2{font-size:20px}.section-title h3{font-size:15px}.section-title .row{justify-content:flex-end}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.stat{
+  min-width:0;position:relative;overflow:hidden;padding:18px;
+  background:linear-gradient(145deg,#141a23,#0e131a);
+  border:1px solid var(--line);border-radius:14px
+}
+.stat:after{
+  content:"";position:absolute;width:80px;height:80px;right:-45px;top:-45px;border-radius:50%;
+  background:rgba(180,245,106,.045)
+}
+.stat strong{
+  display:block;font-family:"Space Grotesk",sans-serif;font-size:27px;line-height:1.1;
+  letter-spacing:-.035em;font-variant-numeric:tabular-nums
+}
+.stat span{display:block;margin-top:7px;color:var(--muted);font-size:11px;font-weight:600}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.setting{
+  padding:16px;background:rgba(10,14,20,.7);
+  border:1px solid var(--line);border-radius:13px
+}
+.setting h3{font-size:14px;margin:0 0 11px}
+.setting .row{justify-content:space-between}
+.field{display:flex;flex-direction:column;gap:7px;flex:1;min-width:180px}
+label{color:#9aa5b4;font-size:11px;font-weight:700;letter-spacing:.015em}
+input,select{
+  width:100%;min-height:42px;padding:10px 12px;
+  border:1px solid var(--line-2);border-radius:10px;
+  background:#090d12;color:var(--text);outline:none
+}
+input::placeholder{color:#596474}
+input:hover,select:hover{border-color:#435063}
+input:focus,select:focus{border-color:rgba(180,245,106,.72);box-shadow:0 0 0 3px rgba(180,245,106,.07)}
+button{
+  min-height:40px;padding:9px 13px;border-radius:10px;
+  border:1px solid var(--line-2);background:#111720;color:#e9edf4;font-weight:600
+}
+button:hover{border-color:#566477;background:#171e28;transform:translateY(-1px)}
+button:active{transform:translateY(0)}
+button.primary{
+  background:linear-gradient(180deg,#baf77a,#98df50);border-color:#b4f56a;color:#0a1107;
+  font-weight:800;box-shadow:0 8px 24px rgba(180,245,106,.10)
+}
+button.primary:hover{background:linear-gradient(180deg,#c8fb8f,#a6e866);border-color:#d0ff9d}
+button.danger{border-color:rgba(255,113,128,.34);background:var(--danger-soft);color:#ff9da8}
+button.danger:hover{border-color:rgba(255,113,128,.65);background:rgba(255,113,128,.15)}
+.badge{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;
+  background:#151c26;border:1px solid #293443;color:#bac4d2;font-size:10px;font-weight:700;
+  white-space:nowrap
+}
+#status{font-variant-numeric:tabular-nums}
+.table-wrap,.scroll{
+  overflow:auto;max-height:480px;border:1px solid var(--line);border-radius:12px;scrollbar-width:thin
+}
+.table{width:100%;min-width:620px;border-collapse:separate;border-spacing:0}
+.table th,.table td{text-align:left;padding:12px 13px;border-bottom:1px solid rgba(45,55,69,.58);vertical-align:middle}
+.table th{
+  position:sticky;top:0;z-index:2;color:#748092;font-size:10px;font-weight:800;
+  text-transform:uppercase;letter-spacing:.08em;background:#111720
+}
+.table tbody tr{transition:background var(--ease)}
+.table tbody tr:hover{background:rgba(180,245,106,.035)}
+.table tbody tr:last-child td{border-bottom:0}
+.bar{height:7px;background:#202934;border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,#659b35,var(--accent));border-radius:inherit}
+.notice{
+  padding:13px 15px;border:1px solid var(--line);border-radius:11px;background:#0d1218;margin:10px 0
+}
+.switch{width:46px;height:26px;min-height:26px;padding:2px;border-radius:20px;background:#28313e;border:0}
+.switch i{display:block;width:22px;height:22px;border-radius:50%;background:#eef2f7;transition:transform var(--ease)}
+.switch.on{background:#5b873c}.switch.on i{transform:translateX(20px)}
+.danger-text{color:var(--danger)}
+.ok-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px rgba(180,245,106,.08)}
+.hero-card{
+  background:
+    radial-gradient(520px 220px at 100% 0,rgba(180,245,106,.08),transparent 70%),
+    linear-gradient(145deg,#151c25,#0c1117)
+}
+.group-card{
+  min-height:142px;display:flex;flex-direction:column;justify-content:space-between;
+  transition:transform var(--ease),border-color var(--ease),background var(--ease)
+}
+.group-card:hover{transform:translateY(-3px);border-color:#3a4757;background:#141c26}
+.group-card h3{margin:0;font-size:15px}.group-card .group-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.empty-state{padding:32px;text-align:center;border:1px dashed #2c394a;border-radius:14px;color:var(--muted)}
+.section-kicker{margin:0 0 5px;color:#718096;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.action-row{display:flex;gap:8px;flex-wrap:wrap}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.icon-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+#admins .setting{background:#10161e}
+#admins .scroll{max-height:430px}
+#users .scroll,#risk .scroll{max-height:470px}
+
+/* Login polish */
+#login input{background:#080c11}
+#login .row{align-items:center}
+#login .primary{min-height:42px}
+
+/* Dense dashboard areas */
+.content>.section>.card{backdrop-filter:blur(4px)}
+.content .card>.section-title+*{min-width:0}
+
+/* Scrollbars */
+*{scrollbar-width:thin;scrollbar-color:#303b49 transparent}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:#303b49;border-radius:99px}
+*::-webkit-scrollbar-thumb:hover{background:#465366}
+
+/* Tablet */
+@media(max-width:1180px){
+  main{padding:20px}
+  #app>.topbar{margin:-20px -20px 20px;padding:14px 20px}
+  .layout{grid-template-columns:78px minmax(0,1fr);gap:16px}
+  .sidebar{top:76px;padding:7px}
+  .sidebar:before{display:none}
+  .navbtn{justify-content:center;padding:11px 8px}
+  .nav-label{display:none}
+  .nav-icon{width:22px;height:22px}.nav-icon svg{width:20px;height:20px}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+/* Small tablet / large phone */
+@media(max-width:820px){
+  main{padding:14px}
+  #app>.topbar{margin:-14px -14px 14px;padding:12px 14px}
+  .layout{display:block}
+  .sidebar{
+    position:sticky;top:68px;z-index:30;display:flex;gap:5px;overflow-x:auto;
+    padding:6px;margin-bottom:14px;border-radius:14px;box-shadow:0 8px 22px rgba(0,0,0,.22)
+  }
+  .sidebar:before{display:none}
+  .navbtn{flex:0 0 auto;width:auto;min-width:45px;margin:0;padding:9px 11px}
+  .navbtn.active{box-shadow:inset 0 -2px 0 var(--accent)}
+  .content{width:100%}
+  .grid2,.grid3{grid-template-columns:1fr}
+  .section-title{align-items:flex-start}
+}
+
+/* Phone */
+@media(max-width:560px){
+  body{font-size:13px}
+  main{padding:10px}
+  #app>.topbar{margin:-10px -10px 10px;padding:10px;top:0}
+  .topbar{gap:9px}.topbar .brand{gap:9px}.topbar .brand-mark{width:34px;height:34px}
+  .brand h1{font-size:19px}.brand p{font-size:11px;margin-top:3px}
+  .topbar #status{display:none}
+  .topbar .row{gap:5px}
+  .topbar #refreshBtn,.topbar #logoutBtn{font-size:0;width:38px;padding:9px;min-height:38px}
+  .sidebar{top:55px;margin-bottom:10px;padding:5px}
+  .navbtn{min-width:43px;padding:9px 10px}
+  .card{padding:14px;border-radius:14px}
+  .stats{grid-template-columns:1fr 1fr;gap:7px}
+  .stat{padding:13px}.stat strong{font-size:21px}.stat span{font-size:10px}
+  .section-title{flex-direction:column;gap:10px}
+  .section-title>.row{width:100%;justify-content:stretch}
+  .section-title>.row select,.section-title>.row button{flex:1}
+  .field{min-width:100%}
+  .action-row button,.row button{min-height:42px}
+  .table{min-width:560px}
+  .login{
+  width:min(100%,460px);
+  margin:18px auto 24px;
+  padding:22px 18px;
+  border-radius:18px!important;
+}
+.login .brand{gap:11px}
+.login .brand h1{font-size:24px}
+.login .brand p{font-size:12px;margin-top:6px}
+.login .field{margin-top:18px!important}
+.login .row{margin-top:16px!important}
+.login .primary{width:100%;min-width:0}
+}
+
+/* Very small phones */
+@media(max-width:380px){
+  .brand h1{font-size:18px}
+  .brand p{display:none}
+  .topbar .brand-mark{width:32px;height:32px}
+  .stats{grid-template-columns:1fr}
+  .stat{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .stat span{margin:0;text-align:right}
+  .login{
+  width:100%;
+  margin:14px auto 20px;
+  padding:20px 14px;
+}
+.login .brand h1{font-size:22px}
+.login .brand p{font-size:11px}
+.login .field{margin-top:16px!important}
+.login .primary{width:100%}
+}
+
+/* Accessibility / motion */
+@media(prefers-reduced-motion:reduce){
+  *,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
+}
+</style>
+
+
+
+
+
+
+
+
+<style id="ghostea-uiux-final">
+/* ============================================================
+   Ghostea Admin — UI/UX layer
+   Responsive enterprise console + mobile top menu +
+   simple switches + custom dialogs.
+   ============================================================ */
+:root{
+  --gx-bg:#080b0d;--gx-surface:#0d1215;--gx-surface2:#11171b;
+  --gx-line:rgba(255,255,255,.075);--gx-line2:rgba(255,255,255,.12);
+  --gx-text:#eef3ee;--gx-muted:#87948e;--gx-accent:#b8f26d;
+  --gx-accent2:#d1ff9a;--gx-danger:#ff7777;--gx-warn:#f2ca6b;
+}
+html{background:var(--gx-bg);color-scheme:dark}
+body{
+  background:radial-gradient(900px 500px at 72% -12%,rgba(184,242,109,.055),transparent 68%),var(--gx-bg);
+  color:var(--gx-text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+button,input,select,textarea{font:inherit}
+button{transition:background .16s ease,border-color .16s ease,transform .12s ease,box-shadow .16s ease}
+button:active{transform:translateY(1px)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+  outline:2px solid rgba(184,242,109,.72);outline-offset:2px
+}
+
+/* Desktop shell */
+#app>.topbar{
+  position:sticky;top:0;z-index:70;min-height:66px;padding:12px 22px!important;
+  background:rgba(8,11,13,.9);border-bottom:1px solid var(--gx-line);
+  backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+  box-shadow:0 8px 32px rgba(0,0,0,.14)
+}
+#app>.topbar .brand h1{font-weight:850;letter-spacing:-.035em}
+#app>.topbar .brand p{color:#718079;font-size:11px}
+#app>.topbar #status{border:1px solid var(--gx-line);background:rgba(255,255,255,.025);border-radius:999px;padding:6px 10px}
+#app>.topbar button{min-height:38px;border-radius:10px}
+
+#app .layout{gap:0!important}
+#app .sidebar{
+  width:226px!important;padding:16px 12px!important;border-right:1px solid var(--gx-line);
+  background:rgba(9,13,15,.84);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)
+}
+#app .sidebar .navbtn{
+  min-height:43px;margin:2px 0!important;padding:0 12px!important;border:1px solid transparent;
+  border-radius:11px;background:transparent;color:#89958f;font-weight:750
+}
+#app .sidebar .navbtn:hover{color:#e4ebe5;background:rgba(255,255,255,.04)}
+#app .sidebar .navbtn.active{
+  color:var(--gx-accent2);background:linear-gradient(90deg,rgba(184,242,109,.115),rgba(184,242,109,.025));
+  border-color:rgba(184,242,109,.14);box-shadow:inset 2px 0 0 var(--gx-accent)
+}
+#app .content{min-width:0;max-width:1540px;width:100%;margin:0 auto}
+#app .section{padding:25px clamp(15px,3vw,38px) 38px}
+#app .card{
+  border:1px solid var(--gx-line);border-radius:16px;
+  background:linear-gradient(145deg,rgba(18,24,28,.93),rgba(10,14,17,.97));
+  box-shadow:0 18px 55px rgba(0,0,0,.25)
+}
+#app .section-title h2{font-size:22px;font-weight:850;letter-spacing:-.04em}
+#app .section-kicker{color:#6f7c76;font-size:10px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}
+
+/* KPI numbers: no circles */
+#app .stat{
+  min-width:0;padding:17px;border:1px solid var(--gx-line);border-radius:14px;
+  background:rgba(255,255,255,.018);box-shadow:none
+}
+#app .stat strong{
+  display:block!important;width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;
+  margin:0 0 7px;padding:0!important;border:0!important;border-radius:0!important;
+  background:transparent!important;box-shadow:none!important;color:var(--gx-text);
+  font-size:26px;line-height:1;font-weight:850;font-variant-numeric:tabular-nums
+}
+#app .stat span{color:#7e8b85;font-size:11px;font-weight:650}
+
+/* Inputs and buttons */
+#app input,#app select,#app textarea{
+  border:1px solid var(--gx-line2);border-radius:10px;background:#090e11;color:var(--gx-text)
+}
+#app input:focus,#app select:focus,#app textarea:focus{
+  border-color:rgba(184,242,109,.48);box-shadow:0 0 0 3px rgba(184,242,109,.07)
+}
+#app button{
+  border:1px solid var(--gx-line2);border-radius:10px;background:#141b1f;color:#dce5df;font-weight:750
+}
+#app button:hover{background:#192125;border-color:rgba(255,255,255,.17)}
+#app button.primary,#app button[type="submit"]{background:var(--gx-accent);color:#0b1009;border-color:var(--gx-accent)}
+#app button.danger{color:#ffaaaa;background:rgba(255,119,119,.07);border-color:rgba(255,119,119,.20)}
+
+/* Simple toggle — intentionally minimal */
+#app .switch{
+  position:relative;width:40px!important;height:22px!important;min-width:40px!important;min-height:22px!important;
+  padding:2px!important;border:1px solid rgba(255,255,255,.14)!important;border-radius:999px!important;
+  background:#2a3237!important;box-shadow:none!important
+}
+#app .switch i{
+  display:block;width:16px!important;height:16px!important;border-radius:50%;
+  background:#e9eeea;box-shadow:0 1px 4px rgba(0,0,0,.35);
+  transition:transform .16s ease,background .16s ease
+}
+#app .switch.on{background:var(--gx-accent)!important;border-color:var(--gx-accent)!important}
+#app .switch.on i{transform:translateX(16px);background:#0d130c}
+#app .switch:focus-visible{outline:2px solid rgba(184,242,109,.7);outline-offset:3px}
+
+/* Status pills */
+#app .badge{border-radius:999px;border:1px solid var(--gx-line2);background:rgba(255,255,255,.035);font-weight:800}
+#app .badge.success{color:#c9f99a;background:rgba(184,242,109,.07);border-color:rgba(184,242,109,.22)}
+#app .badge.warning{color:#f6d98a;background:rgba(242,202,107,.06);border-color:rgba(242,202,107,.22)}
+#app .badge.danger{color:#ffaaaa;background:rgba(255,119,119,.06);border-color:rgba(255,119,119,.22)}
+
+/* Tables */
+#app .scroll{border:1px solid var(--gx-line);border-radius:13px}
+#app .table{border-collapse:separate;border-spacing:0}
+#app .table th{position:sticky;top:0;z-index:2;background:#10161a;color:#77847e;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+#app .table td,#app .table th{border-bottom:1px solid rgba(255,255,255,.055);padding:12px 13px}
+#app .table tbody tr:hover td{background:rgba(255,255,255,.022)}
+
+/* Risk Center mobile containment and responsive table layout. */
+#topicContextBar{display:none;margin:0 0 14px}
+.topic-context{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--line);border-radius:13px;background:rgba(10,14,20,.78)}
+.topic-context .context-label{color:var(--muted);font-size:11px;font-weight:700}
+.topic-context select{width:min(360px,100%);min-width:180px}
+.scope-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+.scope-tab{min-height:36px;padding:7px 11px;font-size:11px}
+.scope-tab.active{color:#eaffd9;background:var(--accent-soft);border-color:var(--accent-border)}
+.topic-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.topic-card{border:1px solid var(--line);background:rgba(10,14,20,.65);border-radius:12px;padding:10px 12px}
+.inherit-note{padding:9px 11px;border:1px dashed var(--line-2);border-radius:10px;color:var(--muted);font-size:11px}
+#risk .setting{min-width:0;width:100%;overflow:hidden}
+#risk .scroll{width:100%;max-width:100%;overflow-x:auto;overflow-y:auto}
+#risk .bar{width:100%;max-width:100%}
+#risk .section-title>.row{min-width:0}
+#risk .section-title>.row>*{min-width:0}
+@media(max-width:720px){
+  #risk .card{overflow:hidden}
+  #risk .setting{padding:14px}
+  #risk .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  #risk .stat{min-width:0;overflow:hidden}
+  #risk .stat strong,#risk .stat span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  #risk .scroll{border-radius:11px}
+
+  /* Top-risk users become compact mobile records instead of a 620px table. */
+  #risk .scroll:has(#riskRows){overflow:visible}
+  #risk .scroll:has(#riskRows) .table{min-width:0;width:100%;display:block}
+  #risk .scroll:has(#riskRows) .table thead{display:none}
+  #risk .scroll:has(#riskRows) .table tbody,
+  #risk .scroll:has(#riskRows) .table tr,
+  #risk .scroll:has(#riskRows) .table td{display:block;width:100%}
+  #risk .scroll:has(#riskRows) .table tr{
+    padding:10px 12px;
+    border-bottom:1px solid rgba(255,255,255,.055);
+  }
+  #risk .scroll:has(#riskRows) .table tr:last-child{border-bottom:0}
+  #risk .scroll:has(#riskRows) .table td{
+    border:0!important;padding:3px 0!important;
+    display:flex;align-items:baseline;justify-content:space-between;gap:14px;
+    text-align:right;
+  }
+  #risk .scroll:has(#riskRows) .table td:before{
+    color:#77847e;font-size:9px;font-weight:800;letter-spacing:.08em;
+    text-transform:uppercase;text-align:left;
+  }
+  #risk .scroll:has(#riskRows) .table td:nth-child(1):before{content:"User"}
+  #risk .scroll:has(#riskRows) .table td:nth-child(2):before{content:"Score"}
+  #risk .scroll:has(#riskRows) .table td:nth-child(3):before{content:"Level"}
+  #risk .scroll:has(#riskRows) .table td:nth-child(4):before{content:"Warnings"}
+  #risk .scroll:has(#riskRows) .table td:nth-child(5):before{content:"Events"}
+}
+@media(max-width:380px){
+  #risk .stats{grid-template-columns:1fr 1fr!important}
+  #risk .stat{padding:11px}
+  #risk .stat strong{font-size:18px}
+  #risk .stat span{font-size:9px}
+  #risk .setting{padding:12px}
+}
+
+/* Custom dialogs */
+dialog{
+  width:min(480px,calc(100vw - 32px));max-width:480px;padding:0;border:1px solid rgba(255,255,255,.11);
+  border-radius:20px;color:var(--gx-text);background:linear-gradient(145deg,#171e22,#0c1114);
+  box-shadow:0 35px 120px rgba(0,0,0,.62)
+}
+dialog::backdrop{background:rgba(2,5,7,.76);backdrop-filter:blur(13px);-webkit-backdrop-filter:blur(13px)}
+.gx-dialog-backdrop{
+  position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;
+  padding:18px;background:rgba(2,5,7,.76);backdrop-filter:blur(13px);-webkit-backdrop-filter:blur(13px)
+}
+.gx-dialog{
+  width:min(460px,100%);max-height:calc(100svh - 36px);overflow:auto;
+  border:1px solid rgba(255,255,255,.11);border-radius:20px;
+  background:linear-gradient(145deg,#171e22,#0c1114);box-shadow:0 35px 120px rgba(0,0,0,.62);
+  padding:22px
+}
+.gx-dialog-title{margin:0 0 7px;font-size:19px;font-weight:850;letter-spacing:-.03em}
+.gx-dialog-text{margin:0;color:#8d9993;line-height:1.55;white-space:pre-wrap}
+.gx-dialog-input{
+  width:100%;min-height:44px;margin-top:14px;padding:0 12px;
+  border:1px solid rgba(255,255,255,.12);border-radius:10px;background:#090e11;color:#eef3ee
+}
+.gx-dialog-select{
+  width:100%;min-height:44px;margin-top:14px;padding:0 10px;
+  border:1px solid rgba(255,255,255,.12);border-radius:10px;background:#090e11;color:#eef3ee
+}
+.gx-dialog-check{display:flex;align-items:center;gap:10px;margin-top:14px;color:#aab5af;font-size:13px}
+.gx-dialog-check input{accent-color:var(--gx-accent)}
+.gx-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:21px}
+.gx-dialog-actions button{min-height:42px;padding:0 15px;border-radius:10px}
+.gx-dialog-actions .gx-primary{background:var(--gx-accent);color:#0b1009;border-color:var(--gx-accent)}
+.gx-dialog-actions .gx-danger{background:rgba(255,119,119,.08);color:#ffaaaa;border-color:rgba(255,119,119,.22)}
+
+@media(max-width:1050px) and (min-width:721px){
+  #app .sidebar{width:82px!important;padding:15px 9px!important}
+  #app .sidebar .navbtn{justify-content:center;padding:0 7px!important}
+  #app .sidebar .nav-label{display:none!important}
+  #app .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  #app .grid2{grid-template-columns:1fr!important}
+}
+
+@media(max-width:720px){
+  html,body{min-width:0;overflow-x:hidden}
+  #app>.topbar{
+    min-height:58px;padding:9px 12px!important;border-radius:0 0 15px 15px
+  }
+  #app>.topbar .brand-mark{width:34px;height:34px;border-radius:10px}
+  #app>.topbar .brand h1{font-size:17px}
+  #app>.topbar .brand p,#app>.topbar #status{display:none}
+
+  /* Mobile top menubar */
+  #app .layout{display:block!important}
+  #app .sidebar{
+    position:sticky!important;top:58px!important;z-index:65;
+    display:flex!important;width:100%!important;height:55px!important;min-height:55px!important;
+    padding:7px 8px!important;gap:5px!important;overflow-x:auto!important;overflow-y:hidden!important;
+    border:0!important;border-bottom:1px solid var(--gx-line)!important;border-radius:0 0 14px 14px!important;
+    background:rgba(10,14,17,.95)!important;box-shadow:0 7px 25px rgba(0,0,0,.18)!important;
+    scrollbar-width:none
+  }
+  #app .sidebar::-webkit-scrollbar{display:none}
+  #app .sidebar .navbtn{
+    flex:0 0 auto!important;width:auto!important;min-width:max-content!important;
+    height:40px!important;min-height:40px!important;margin:0!important;padding:0 12px!important;
+    display:inline-flex!important;flex-direction:row!important;align-items:center!important;gap:7px!important;
+    border:1px solid transparent!important;border-radius:10px!important;white-space:nowrap
+  }
+  #app .sidebar .navbtn.active{box-shadow:inset 0 -2px 0 var(--gx-accent)!important}
+  #app .sidebar .nav-label{display:block!important;max-width:none!important;font-size:11px!important;white-space:nowrap!important}
+  #app .sidebar .nav-icon,#app .sidebar .nav-icon svg{width:18px!important;height:18px!important}
+  #app .content{width:100%;max-width:none}
+  #app .section{padding:15px 12px 24px!important}
+  #app .card{border-radius:15px;box-shadow:0 12px 35px rgba(0,0,0,.20)}
+  #app .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px}
+  #app .stat{padding:14px}
+  #app .stat strong{font-size:21px}
+  #app .grid2,#app .grid3{grid-template-columns:1fr!important}
+  #app .section-title>.row{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  #app .section-title>.row>*{width:100%}
+  #app .section-title>.row .gx-select-wrap{width:100%;min-width:0}
+  #app .scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  #app .table{min-width:620px}
+  #login{width:100%;min-height:100svh;margin:0!important;border:0;border-radius:0;padding:26px 16px!important;display:flex;flex-direction:column;justify-content:center;box-shadow:none}
+  .gx-dialog-backdrop{align-items:flex-end;padding:0}
+  .gx-dialog{width:100%;max-height:90svh;padding:20px 16px calc(18px + env(safe-area-inset-bottom));border-radius:22px 22px 0 0}
+  .gx-dialog-actions{display:grid;grid-template-columns:1fr 1fr}
+  .gx-dialog-actions button{width:100%}
+}
+@media(max-width:380px){
+  #app>.topbar{padding-left:9px!important;padding-right:9px!important}
+  #app .sidebar .navbtn{padding:0 9px!important}
+  #app .sidebar .nav-label{font-size:10px!important}
+  #app .section{padding-left:9px!important;padding-right:9px!important}
+  #app .stats{gap:7px}
+  #app .stat{padding:12px}
+  #app .stat strong{font-size:19px}
+}
+@media(max-width:720px) and (orientation:landscape){
+  #app .sidebar{height:50px!important;min-height:50px!important}
+  #app .sidebar .navbtn{height:36px!important;min-height:36px!important}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important;scroll-behavior:auto!important}
+}
+
+/* Final UI adjustments: compact topbar controls + zero native select dialogs */
+#app>.topbar .topbar-actions{
+  display:flex;align-items:center;justify-content:flex-end;gap:7px;min-width:0;
+}
+#app>.topbar .topbar-action{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  min-width:42px;min-height:42px;padding:0 12px;
+  border-radius:11px;background:#11181c;border:1px solid rgba(255,255,255,.11);
+}
+#app>.topbar .topbar-action svg{
+  width:17px;height:17px;flex:none;stroke:currentColor;fill:none;
+  stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;
+}
+#app>.topbar .topbar-action span{font-size:12px;font-weight:750}
+#app>.topbar .topbar-action:before{content:none!important}
+#app>.topbar #roleBadge{
+  order:0;margin-left:0;padding:7px 11px;max-width:150px;overflow:hidden;
+  text-overflow:ellipsis;text-transform:capitalize;
+}
+#app>.topbar #status{order:-1}
+@media(max-width:720px){
+  #app>.topbar{display:flex;align-items:center}
+  #app>.topbar .topbar-actions{gap:6px;flex:0 0 auto}
+  #app>.topbar .topbar-action{
+    width:42px;height:42px;min-width:42px;padding:0;border-radius:11px;
+  }
+  #app>.topbar .topbar-action span{display:none}
+  #app>.topbar #roleBadge{
+    display:inline-flex!important;max-width:112px;min-height:38px;padding:7px 10px;
+    font-size:10px;overflow:hidden;text-overflow:ellipsis;
+  }
+}
+@media(max-width:420px){
+  #app>.topbar .topbar-actions{gap:5px}
+  #app>.topbar .topbar-action{width:39px;height:39px;min-width:39px}
+  #app>.topbar .topbar-action svg{width:16px;height:16px}
+  #app>.topbar #roleBadge{max-width:96px;padding-inline:8px}
+}
+
+/* Custom select trigger. The real select remains as a value store only. */
+.gx-native-select{
+  position:absolute!important;width:1px!important;height:1px!important;
+  min-height:1px!important;margin:-1px!important;padding:0!important;border:0!important;
+  opacity:0!important;pointer-events:none!important;clip:rect(0 0 0 0)!important;
+}
+.gx-select-wrap{position:relative;min-width:0;flex:1 1 120px}
+.gx-select-trigger{
+  width:100%;min-height:42px;padding:10px 38px 10px 12px;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  text-align:left;color:var(--gx-text);background:#090e11;
+  border:1px solid var(--gx-line2);border-radius:10px;
+}
+.gx-select-trigger:hover{border-color:rgba(255,255,255,.18);background:#0c1215}
+.gx-select-trigger:focus-visible{outline:2px solid rgba(184,242,109,.72);outline-offset:2px}
+.gx-select-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gx-select-chevron{
+  position:absolute;right:12px;width:8px;height:8px;
+  border-right:1.7px solid #8d9993;border-bottom:1.7px solid #8d9993;
+  transform:rotate(45deg) translateY(-2px);pointer-events:none;
+}
+
+/* Select dialog shares the same custom dialog system and never opens the browser picker. */
+.gx-select-dialog .gx-dialog-title{margin-bottom:4px}
+.gx-select-options{
+  display:grid;gap:6px;margin-top:16px;
+}
+.gx-select-option{
+  width:100%;min-height:46px;padding:11px 13px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border:1px solid rgba(255,255,255,.085);border-radius:11px;
+  background:#0d1418;color:#dce5df;text-align:left;
+}
+.gx-select-option:hover{background:#151e22;border-color:rgba(184,242,109,.22)}
+.gx-select-option.is-selected{
+  background:rgba(184,242,109,.085);
+  border-color:rgba(184,242,109,.30);color:#d9ffae;
+}
+.gx-select-option-mark{
+  width:17px;height:17px;display:grid;place-items:center;flex:none;
+  border:1px solid #59655f;border-radius:50%;font-size:11px;color:transparent;
+}
+.gx-select-option.is-selected .gx-select-option-mark{
+  border-color:var(--gx-accent);background:var(--gx-accent);color:#0b1009;
+}
+.gx-select-close{
+  width:100%;margin-top:12px;
+}
+@media(max-width:720px){
+  .gx-select-dialog .gx-dialog{padding-top:18px}
+  .gx-select-options{gap:5px}
+  .gx-select-option{min-height:48px}
+}
+
+</style>
+
+</head>
+<body>
+<main>
+<section id="login" class="card login">
+  <div class="brand"><span class="brand-mark nav-icon" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="M8 19a12 12 0 0 1 24 0v12l-4-2-4 2-4-2-4 2-4-2-4 2z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><circle cx="16" cy="19" r="1.7" fill="currentColor" stroke="none"/><circle cx="24" cy="19" r="1.7" fill="currentColor" stroke="none"/></svg></span><div><h1>Ghostea Admin</h1><p>Secure moderation control center</p></div></div>
+  <div class="field" style="margin-top:18px"><label for="username">Admin username</label><input id="username" type="text" autocomplete="username" placeholder="superadmin"></div>
+  <div class="field" style="margin-top:12px"><label for="password">Admin password</label><input id="password" type="password" autocomplete="current-password" placeholder="Enter dashboard password"></div>
+  <div class="row" style="margin-top:12px"><button id="loginBtn" class="primary">Login</button><span id="loginError" class="error"></span></div>
+</section>
+
+<section id="app" class="hidden">
+  <div class="topbar">
+    <div class="brand"><span class="brand-mark nav-icon" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="M8 19a12 12 0 0 1 24 0v12l-4-2-4 2-4-2-4 2-4-2-4 2z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><circle cx="16" cy="19" r="1.7" fill="currentColor" stroke="none"/><circle cx="24" cy="19" r="1.7" fill="currentColor" stroke="none"/></svg></span><div><h1>Ghostea</h1><p>Admin Control Center</p></div></div>
+    <div class="topbar-actions">
+      <span id="status" class="badge">Checking…</span>
+      <button id="refreshBtn" class="topbar-action" aria-label="Refresh dashboard">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3M4 5v4h4"/><path d="M4 13a8 8 0 0 0 14.9 3M20 19v-4h-4"/></svg><span>Refresh</span>
+      </button>
+      <button id="logoutBtn" class="topbar-action" aria-label="Logout">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 4v16"/></svg><span>Logout</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar card">
+      <button class="navbtn active" data-section="overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13h4v7H4zM10 4h4v16h-4zM16 8h4v12h-4z"/></svg></span><span class="nav-label">Overview</span></button>
+      <button class="navbtn" data-section="settings" data-permission="settings"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path d="m19.4 15 .1.1a2 2 0 0 1-2.8 2.8l-.1-.1a2 2 0 0 0-3.4 1.4V19a2 2 0 0 1-4 0v-.2a2 2 0 0 0-3.4-1.4l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1A2 2 0 0 0 1.6 11H1.5a2 2 0 0 1 0-4h.1A2 2 0 0 0 3 3.6l-.1-.1A2 2 0 0 1 5.7.7l.1.1A2 2 0 0 0 9.2 0V0a2 2 0 0 1 4 0v.2a2 2 0 0 0 3.4 1.4l.1-.1a2 2 0 0 1 2.8 2.8l-.1.1A2 2 0 0 0 20.8 8h.1a2 2 0 0 1 0 4h-.1a2 2 0 0 0-1.4 3Z"/></svg></span><span class="nav-label">Settings</span></button>
+      <button class="navbtn" data-section="filters" data-permission="settings"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16M7 12h10M10 19h4"/></svg></span><span class="nav-label">Filters</span></button>
+      <button class="navbtn" data-section="analytics"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg></span><span class="nav-label">Analytics</span></button>
+      <button class="navbtn" data-section="resources"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7.5 12 4l8 3.5-8 3.5-8-3.5Z"/><path d="M4 12.5 12 16l8-3.5M4 17.5 12 21l8-3.5"/></svg></span><span class="nav-label">Resources</span></button>
+      <button class="navbtn" data-section="logs"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="nav-label">Moderation Logs</span></button>
+      <button class="navbtn" data-section="users"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span><span class="nav-label">Users</span></button>
+      <button class="navbtn" data-section="risk"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 20 6v5c0 5-3.2 8.5-8 10-4.8-1.5-8-5-8-10V6z"/><path d="m9 12 2 2 4-4"/></svg></span><span class="nav-label">Risk Center</span></button>
+      <button class="navbtn super-only" data-section="admins"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.2 4.5 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7z"/></svg></span><span class="nav-label">Admins</span></button>
+    </aside>
+
+    <div class="content">
+      <div id="topicContextBar" class="topic-context">
+        <span class="context-label">Scope</span>
+        <select id="topicSelector" aria-label="Select moderation scope"></select>
+        <span id="topicContextMeta" class="badge">Group-wide</span>
+        <button id="topicContextClear" type="button">Group view</button>
+      </div>
+      <section id="overview" class="section active">
+        <div class="card hero-card"><p class="section-kicker">Workspace</p><div class="section-title"><h2>Groups</h2><div class="row"><button id="addGroupBtn" class="primary">＋ Add Group</button><button id="overviewRefresh">Refresh</button></div></div><p class="muted">Link a Telegram group by ID. Ghostea verifies that the bot is currently an administrator before linking it.</p>
+        <div id="addGroupPanel" class="card hidden" style="margin:0 0 14px;background:rgba(184,242,109,.035);border-color:rgba(184,242,109,.16)">
+          <div class="section-title"><h3>Link Telegram Group</h3><button id="cancelAddGroup">Cancel</button></div>
+          <div class="row" style="align-items:flex-end">
+            <div class="field"><label for="groupIdInput">Telegram Group ID</label><input id="groupIdInput" inputmode="text" placeholder="-1001234567890123" autocomplete="off"></div>
+            <button id="verifyAddGroup" class="primary">Verify &amp; Link</button>
+          </div>
+          <p id="addGroupMessage" class="muted" style="margin:10px 0 0">Enter the Telegram chat ID exactly as Telegram provides it (for supergroups it normally starts with -100). The bot must already be an administrator in that group.</p>
+        </div><div id="groups" class="grid2"></div></div>
+        <div id="overviewStats" class="card hidden"><div class="section-title"><h2>Selected group</h2><span id="selectedGroup" class="badge"></span></div><div class="stats" style="margin-top:12px"><div class="stat"><strong id="ovWarnings">—</strong><span>Warnings</span></div><div class="stat"><strong id="ovActions">—</strong><span>Moderation actions</span></div><div class="stat"><strong id="ovJoins">—</strong><span>Member joins</span></div><div class="stat"><strong id="ovLimit">—</strong><span>Warning limit</span></div></div></div>
+      </section>
+
+      <section id="settings" class="section">
+        <div class="card"><p class="section-kicker">Configuration</p><div class="section-title"><h2 id="settingsTitle">Group Settings</h2><div class="row"><button id="resetTopicOverrides" class="danger hidden" data-permission="settings">Reset topic overrides</button><button id="saveSettings" class="primary" data-permission="settings">Save changes</button></div></div><p id="settingsMessage" class="muted">Select a group from Overview.</p><div id="settingsScopeNote" class="inherit-note hidden"></div><div id="settingsForm" class="hidden">
+          <div id="topicOverrideNote" class="inherit-note hidden" style="margin-top:12px"></div>
+          <div class="grid3" style="margin-top:14px">
+            <div class="setting"><label>Warning limit</label><input data-key="max_warnings" type="number" min="1" max="20"></div>
+            <div class="setting"><label>Mute 1 (minutes)</label><input data-key="mute1_minutes" type="number" min="1" max="10080"></div>
+            <div class="setting"><label>Mute 2 (minutes)</label><input data-key="mute2_minutes" type="number" min="1" max="10080"></div>
+            <div class="setting"><label>Flood message limit</label><input data-key="flood_message_limit" type="number" min="2" max="100"></div>
+            <div class="setting"><label>Flood window (seconds)</label><input data-key="flood_window_seconds" type="number" min="1" max="300"></div>
+            <div class="setting"><label>Flood mute (minutes)</label><input data-key="flood_mute_minutes" type="number" min="1" max="10080"></div>
+            <div class="setting"><label>Anti-Raid join limit</label><input data-key="antiraid_join_limit" type="number" min="2" max="1000"></div>
+            <div class="setting"><label>Anti-Raid window (seconds)</label><input data-key="antiraid_window_seconds" type="number" min="5" max="3600"></div>
+            <div class="setting"><label>Anti-Raid lock (minutes)</label><input data-key="antiraid_lock_minutes" type="number" min="1" max="1440"></div>
+            <div class="setting"><label>Verification timeout</label><input data-key="verification_timeout_seconds" type="number" min="30" max="3600"></div>
+            <div class="setting"><label>Maximum message length</label><input data-key="max_message_length" type="number" min="100" max="10000"></div>
+            <div class="setting"><label>Repeated message limit</label><input data-key="repeated_message_limit" type="number" min="2" max="100"></div>
+            <div class="setting"><label>Repeated window (seconds)</label><input data-key="repeated_message_window_seconds" type="number" min="5" max="3600"></div>
+            <div class="setting"><label>Mention spam limit</label><input data-key="mention_spam_limit" type="number" min="2" max="100"></div>
+            <div class="setting"><label>Warning decay (days)</label><input data-key="warning_decay_days" type="number" min="1" max="3650"></div>
+          </div>
+          <div class="grid2" style="margin-top:12px">
+            <div class="setting"><label>Blocked-link action</label><select data-key="blocked_link_action"><option value="delete">Delete</option><option value="warn">Warn</option></select></div>
+            <div class="setting"><label>Protection switches</label><div id="switches" class="row" style="margin-top:8px"></div></div>
+          </div>
+        </div></div>
+      </section>
+
+      <section id="filters" class="section">
+        <div class="card"><div class="section-title"><h2>Custom Filters</h2><button id="filtersRefresh">Refresh</button></div><p class="muted">Add group-specific words, domains or patterns without editing the source repository.</p><div id="filterForm" class="grid3"><div class="field"><label>Type</label><select id="filterType"><option value="word">Word</option><option value="domain">Domain</option><option value="pattern">Pattern</option></select></div><div class="field" style="grid-column:span 2"><label>Value</label><input id="filterValue" maxlength="500" placeholder="e.g. example.com or pattern"></div></div><button id="addFilter" class="primary" data-permission="settings" style="margin-top:10px">Add filter</button><p id="filterMessage" class="muted"></p><div class="scroll"><table class="table"><thead><tr><th>Type</th><th>Value</th><th>Action</th></tr></thead><tbody id="filterRows"></tbody></table></div></div>
+      </section>
+
+      <section id="analytics" class="section">
+        <div class="card"><p class="section-kicker">Insights</p><div class="section-title"><h2>Analytics</h2><div class="row"><select id="analyticsDays"><option>7</option><option>14</option><option>30</option><option>90</option></select><button id="analyticsRefresh">Refresh</button></div></div><p id="analyticsMessage" class="muted">Select a group from Overview.</p><div id="analyticsPanel" class="hidden"><div class="stats" style="margin-top:12px"><div class="stat"><strong id="anJoins">—</strong><span>Joins</span></div><div class="stat"><strong id="anWarnings">—</strong><span>Warnings</span></div><div class="stat"><strong id="anActions">—</strong><span>Actions</span></div><div class="stat"><strong id="anDays">—</strong><span>Period</span></div></div><div class="grid2" style="margin-top:12px"><div class="setting"><h3>Warning reasons</h3><div id="warningBars"></div></div><div class="setting"><h3>Moderation actions</h3><div id="actionBars"></div></div></div></div></div>
+      </section>
+
+      <section id="resources" class="section">
+        <div class="card">
+          <div class="section-title">
+            <div><p class="section-kicker">Publishing Monitor</p><h2>Resources</h2></div>
+            <div class="row"><button id="resourcesRefresh">Refresh</button></div>
+          </div>
+          <p id="resourcesMessage" class="muted">Select a group from Overview.</p>
+          <div id="resourcesPanel" class="hidden">
+            <div class="stats" style="margin-top:12px">
+              <div class="stat"><strong id="resTotal">—</strong><span>Published resources</span></div>
+              <div class="stat"><strong id="resFiles">—</strong><span>Files / media</span></div>
+              <div class="stat"><strong id="resUrls">—</strong><span>URLs</span></div>
+              <div class="stat"><strong id="resFlags">—</strong><span>Flags</span></div>
+            </div>
+            <div class="scroll" style="margin-top:14px">
+              <table class="table">
+                <thead><tr><th>Time</th><th>Type</th><th>Source</th><th>Caption / Flag</th><th>Topic</th><th>Created by</th><th>Message</th></tr></thead>
+                <tbody id="resourceRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="logs" class="section">
+        <div class="card"><div class="section-title"><h2>Moderation Logs</h2><button id="logsRefresh">Refresh</button></div><p id="logsMessage" class="muted">Select a group from Overview.</p><div class="scroll"><table class="table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Topic</th><th>Reason</th><th>Details</th></tr></thead><tbody id="logRows"></tbody></table></div></div>
+
+      </section>
+
+      <section id="risk" class="section">
+        <div class="card">
+          <div class="section-title">
+            <h2>Risk Center</h2>
+            <div class="row">
+              <select id="riskDays"><option>7</option><option>14</option><option>30</option><option>90</option></select>
+              <button id="riskRefresh">Refresh</button>
+            </div>
+          </div>
+          <p id="riskMessage" class="muted">Select a group from Overview.</p>
+          <div id="riskPanel" class="hidden">
+            <div class="stats" style="margin-top:12px">
+              <div class="stat"><strong id="riskUsers">—</strong><span>Users with activity</span></div>
+              <div class="stat"><strong id="riskHigh">—</strong><span>High/Critical</span></div>
+              <div class="stat"><strong id="riskEvents">—</strong><span>Risk events</span></div>
+              <div class="stat"><strong id="riskPeriod">—</strong><span>Period</span></div>
+            </div>
+            <div class="grid2" style="margin-top:12px">
+              <div class="setting"><h3>Top risk users</h3><div class="scroll"><table class="table"><thead><tr><th>User</th><th>Score</th><th>Level</th><th>Warnings</th><th>Events</th></tr></thead><tbody id="riskRows"></tbody></table></div></div>
+              <div class="setting"><h3>Risk categories</h3><div id="riskBars"></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="admins" class="section super-only">
+        <div class="card">
+          <div class="section-title"><h2>Admin Management</h2><button id="adminsRefresh">Refresh</button></div>
+          <p id="adminsMessage" class="muted">Only Super Admin can manage dashboard admins.</p>
+          <div class="setting" style="margin-top:12px">
+            <h3>Create admin</h3>
+            <div class="grid2">
+              <input id="newAdminUsername" placeholder="username (3–32 chars)" />
+              <input id="newAdminDisplay" placeholder="display name" />
+              <input id="newAdminPassword" type="password" placeholder="password (10+ chars)" />
+              <select id="newAdminRole"><option value="admin">Admin</option><option value="moderator">Moderator</option><option value="viewer">Viewer</option><option value="super_admin">Super Admin</option></select>
+            </div>
+            <button id="createAdmin" style="margin-top:10px">Create admin</button>
+          </div>
+          <div class="scroll" style="margin-top:18px">
+            <table class="table"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th></tr></thead><tbody id="adminRows"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <section id="users" class="section">
+        <div class="card">
+          <div class="section-title"><h2>User Management</h2></div>
+          <p class="muted">Enter a Telegram numeric user ID, inspect moderation history, and apply admin actions.</p>
+          <div class="grid3" style="margin-top:12px">
+            <div class="field"><label>User ID</label><input id="userId" inputmode="numeric" placeholder="e.g. 123456789"></div>
+            <div class="field"><label>Mute duration (minutes)</label><input id="userMinutes" type="number" min="1" max="10080" value="10"></div>
+            <div class="field"><label>Warning reason</label><input id="userReason" maxlength="500" value="Dashboard action"></div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <button id="loadUser" class="primary">Load User</button>
+            <button data-user-action="warn">Warn</button>
+            <button data-user-action="unwarn">Remove Warning</button>
+            <button data-user-action="reset_warnings">Reset Warnings</button>
+            <button data-user-action="mute">Mute</button>
+            <button data-user-action="unmute">Unmute</button>
+            <button data-user-action="ban" class="danger">Ban</button>
+            <button data-user-action="unban">Unban</button>
+          </div>
+          <p id="userMessage" class="muted"></p>
+          <div class="section-title" style="margin-top:18px"><h3>Known Users</h3><button id="usersRefresh">Refresh</button></div>
+          <div class="scroll"><table class="table"><thead><tr><th>User ID</th><th>Warnings</th><th>Actions</th><th>Reputation</th><th>Last activity</th><th></th></tr></thead><tbody id="userRows"></tbody></table></div>
+          <div id="userProfile" class="hidden">
+            <div class="stats" style="margin-top:12px">
+              <div class="stat"><strong id="uWarnings">—</strong><span>Warnings</span></div>
+              <div class="stat"><strong id="uRep">—</strong><span>Reputation</span></div>
+              <div class="stat"><strong id="uStatus">—</strong><span>Telegram status</span></div>
+              <div class="stat"><strong id="uUser">—</strong><span>User</span></div>
+              <div class="stat"><strong id="uRisk">—</strong><span>Risk score</span></div>
+            </div>
+            <div class="grid2" style="margin-top:12px">
+              <div class="setting"><h3>Warning history</h3><div id="uWarningHistory" class="scroll"></div></div>
+              <div class="setting"><h3>Moderation history</h3><div id="uLogs" class="scroll"></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id); let selectedGroup=null; let settings=null; let selectionToken=0; let topics=[]; let selectedTopic=null; let selectedChatMeta=null; const topicSwitches=new Set(["abuse_filter_enabled","spam_filter_enabled","link_filter_enabled","flood_protection_enabled"]);
+const riskLevels={low:'Low',medium:'Medium',high:'High',critical:'Critical'}; const pendingUserActions=new Set();
+const switchKeys=[['abuse_filter_enabled','Abuse'],['spam_filter_enabled','Spam'],['link_filter_enabled','Links'],['flood_protection_enabled','Flood'],['welcome_enabled','Welcome'],['antiraid_enabled','Anti-Raid'],['verification_enabled','Verification'],['warning_decay_enabled','Warning decay']];
+async function api(path,options={}){
+  const method=(options.method||'GET').toUpperCase();
+  const read=method==='GET';
+  const request=async()=>{
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),20000);
+    try{return await fetch('/api/ghostea?path='+encodeURIComponent(path),{...options,signal:controller.signal,headers:{'Content-Type':'application/json',...(options.headers||{})}})}
+    finally{clearTimeout(timer)}
+  };
+  let r;
+  try{r=await request();if(read&&[502,503,504].includes(r.status))r=await request()}
+  catch(e){throw new Error(e.name==='AbortError'?'Request timed out. Please try again.':'Network error. Check your connection.')}
+  let d={};try{d=await r.json()}catch{}
+  if(r.status===401){showLogin();throw new Error('Session expired. Please sign in again.')}
+  if(r.status===403){throw new Error(d.error==='permission_denied'?'You do not have permission for this action.':(d.error||'Permission denied'))}
+  if(r.status===409){throw new Error(d.error||'Conflict. The current state changed; refresh and try again.')}
+  if(r.status===429){throw new Error('Too many requests. Please wait and try again.')}
+  if(!r.ok)throw new Error(d.error||'Request failed');
+  return d
+}
+function showLogin(){ $('login').classList.remove('hidden');$('app').classList.add('hidden') }
+function showApp(admin){ $('login').classList.add('hidden');$('app').classList.remove('hidden'); applyRole(admin?.role||'viewer'); loadGroups() }
+function applyRole(role){
+  const permissions={
+    super_admin:new Set(['read','moderate','settings','manage_admins']),
+    admin:new Set(['read','moderate','settings']),
+    moderator:new Set(['read','moderate']),
+    viewer:new Set(['read'])
+  }[role]||new Set(['read']);
+  document.querySelectorAll('.super-only').forEach(el=>el.style.display=role==='super_admin'?'':'none');
+  document.querySelectorAll('[data-permission]').forEach(el=>{
+    el.style.display=permissions.has(el.dataset.permission)?'':'none';
+  });
+  document.querySelectorAll('[data-user-action]').forEach(el=>{
+    el.style.display=permissions.has('moderate')?'':'none';
+  });
+  $('status').dataset.role=role;
+  const badge=document.createElement('span'); badge.className='badge'; badge.textContent=role.replaceAll('_',' ');
+  const old=document.getElementById('roleBadge'); if(old)old.remove(); badge.id='roleBadge'; $('status').after(badge);
+}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function linkGroup(){
+  const input=$('groupIdInput'), msg=$('addGroupMessage');
+  const raw=input.value.trim();
+  if(!/^-?\d{1,16}$/.test(raw) || Number(raw)===0){msg.textContent='❌ Enter a valid Telegram Group ID, including the leading - for supergroups (e.g. -1001234567890).';return}
+  msg.textContent='⏳ Verifying the group and bot permissions…';
+  $('verifyAddGroup').disabled=true;
+  try{
+    const d=await api('/api/groups/link',{method:'POST',body:JSON.stringify({chat_id:raw})});
+    msg.textContent='✅ '+(d.message||'Group verified and linked.');
+    input.value='';
+    await loadGroups();
+  }catch(e){msg.textContent='❌ '+e.message}
+  finally{$('verifyAddGroup').disabled=false}
+}
+async function loadGroups(){try{const h=await api('/api/health');$('status').textContent='🟢 API online • DB '+(h.database?'OK':'ERROR');$('status').className='badge ok';const d=await api('/api/groups');const groups=d.groups||[];window.__ghosteaGroups=groups;$('groups').innerHTML='';if(!groups.length){$('groups').innerHTML='<div class="notice muted">No configured groups yet. Add the bot to a group and let it process a message.</div>';return}for(const g of groups){const c=document.createElement('div');c.className='card';const kind=g.chat_type==='group'?'Group':(g.is_forum?'Forum Supergroup':'Supergroup');const visibilityBadge=`<span class="badge">${g.visibility==='public'?'Public':'Private'}</span>`;const forumBadge=g.is_forum?'<span class="badge">Topics enabled</span>':'';const identity=g.public_url?`<a class="muted" href="${esc(g.public_url)}" target="_blank" rel="noopener noreferrer">@${esc(g.username)}</a>`:'No public username';c.innerHTML=`<div class="section-title"><h3>${kind} ${esc(g.chat_id)}</h3><div class="topic-meta">${visibilityBadge}${forumBadge}<span class="badge">limit ${Number(g.max_warnings||0)}</span></div></div><p class="muted">${identity} · Abuse ${g.abuse_filter_enabled?'ON':'OFF'} · Spam ${g.spam_filter_enabled?'ON':'OFF'} · Anti-Raid ${g.antiraid_enabled?'ON':'OFF'}</p><button data-group="${esc(g.chat_id)}" class="selectGroup">Manage group</button>`;$('groups').appendChild(c)}document.querySelectorAll('.selectGroup').forEach(b=>b.onclick=()=>selectGroup(b.dataset.group));if(selectedGroup)selectGroup(selectedGroup)}catch(e){$('status').textContent='🔴 '+e.message;$('status').className='badge error'}}
+async function loadTopics(token=selectionToken){const group=selectedGroup;if(!group){topics=[];return}try{const d=await api('/api/groups/'+group+'/topics?limit=200');if(group!==selectedGroup||token!==selectionToken)return;topics=d.topics||[];renderTopicSelector()}catch(e){topics=[];renderTopicSelector();$('topicContextMeta').textContent='Topic data unavailable'}}
+function renderTopicSelector(){const bar=$('topicContextBar');if(!selectedChatMeta?.is_forum){bar.style.display='none';selectedTopic=null;return}bar.style.display='flex';const opts=['<option value="">Group-wide</option>'].concat(topics.map(t=>`<option value="${esc(t.topic_id)}">${esc(t.name||('Topic '+t.topic_id))}${t.is_closed?' · closed':''}</option>`));$('topicSelector').innerHTML=opts.join('');$('topicSelector').value=selectedTopic==null?'':String(selectedTopic);$('topicContextMeta').textContent=selectedTopic==null?'Group-wide':'Topic '+selectedTopic;$('topicContextClear').classList.toggle('hidden',selectedTopic==null)}
+async function selectTopic(value){selectedTopic=value===''?null:Number(value);renderTopicSelector();const token=selectionToken;await loadSettings(token);await loadAnalytics(token);await loadResources(token);await loadLogs(token);await loadRisk(token);}
+async function selectGroup(id){selectionToken++;const token=selectionToken;selectedGroup=String(id);selectedTopic=null;selectedChatMeta=null;$('selectedGroup').textContent=selectedGroup;$('overviewStats').classList.remove('hidden');const g=(window.__ghosteaGroups||[]).find(x=>String(x.chat_id)===String(id));selectedChatMeta=g||null;await loadTopics(token);await loadSettings(token);await loadAnalytics(token);await loadResources(token);await loadLogs(token);await loadFilters(token);await loadUsers(token);await loadRisk(token);renderTopicSelector();}
+async function loadSettings(token=selectionToken){const group=selectedGroup;if(!group)return;try{let next;if(selectedTopic!=null){const d=await api('/api/groups/'+group+'/topics/'+selectedTopic+'/settings');next=d.effective||{};settings=next;$('settingsScopeNote').classList.remove('hidden');$('settingsScopeNote').textContent='Viewing Topic '+selectedTopic+'. Topic overrides are applied on top of group settings.';$('topicOverrideNote').classList.remove('hidden');const overrides=d.overrides||{};$('topicOverrideNote').textContent=Object.keys(overrides).length?'This topic has '+Object.keys(overrides).length+' override(s). Saving changes updates the topic overlay only.':'No topic overrides yet. Current values are inherited from the group.';}else{next=await api('/api/groups/'+group+'/settings');settings=next;$('settingsScopeNote').classList.add('hidden');$('topicOverrideNote').classList.add('hidden')}if(group!==selectedGroup||token!==selectionToken)return;$('settingsTitle').textContent=selectedTopic==null?'Group Settings':'Topic Settings';$('settingsForm').classList.remove('hidden');$('settingsMessage').textContent=(selectedTopic==null?'Editing group ':'Editing topic '+selectedTopic+' in group ')+selectedGroup;document.querySelectorAll('[data-key]').forEach(el=>{const k=el.dataset.key;if(settings[k]!==undefined&&el.type!=='button')el.value=settings[k]});$('switches').innerHTML='';for(const [key,label] of switchKeys){const wrap=document.createElement('div');wrap.className='row setting';wrap.style.flex='1 1 180px';wrap.innerHTML=`<span>${label}</span><button type="button" class="switch ${settings[key]?'on':''}" data-switch="${key}" aria-label="Toggle ${label}"><i></i></button>`;$('switches').appendChild(wrap)}document.querySelectorAll('[data-switch]').forEach(b=>b.onclick=()=>{const k=b.dataset.switch;settings[k]=!settings[k];b.classList.toggle('on',settings[k])});$('ovLimit').textContent=settings.max_warnings??'—';if(selectedTopic!=null){const blocked=new Set(['max_warnings','mute1_minutes','mute2_minutes','antiraid_join_limit','antiraid_window_seconds','antiraid_lock_minutes','verification_timeout_seconds','warning_decay_days']);document.querySelectorAll('[data-key]').forEach(el=>{el.disabled=blocked.has(el.dataset.key)});document.querySelectorAll('[data-switch]').forEach(b=>{b.disabled=!topicSwitches.has(b.dataset.switch)});$('saveSettings').disabled=false;$('resetTopicOverrides').classList.remove('hidden');}else{document.querySelectorAll('[data-key]').forEach(el=>el.disabled=false);document.querySelectorAll('[data-switch]').forEach(b=>b.disabled=false);$('resetTopicOverrides').classList.add('hidden')}}catch(e){$('settingsMessage').textContent='❌ '+e.message}}
+async function saveSettings(){if(!selectedGroup)return;const payload={};document.querySelectorAll('[data-key]').forEach(el=>{if(el.disabled)return;const k=el.dataset.key;payload[k]=el.type==='number'?Number(el.value):el.value});document.querySelectorAll('[data-switch]').forEach(b=>{if(!b.disabled)payload[b.dataset.switch]=b.classList.contains('on')});try{const path=selectedTopic==null?'/api/groups/'+selectedGroup+'/settings':'/api/groups/'+selectedGroup+'/topics/'+selectedTopic+'/settings';await api(path,{method:'PATCH',body:JSON.stringify(payload)});$('settingsMessage').textContent='✅ '+(selectedTopic==null?'Group settings':'Topic overrides')+' saved';await loadSettings()}catch(e){$('settingsMessage').textContent='❌ '+e.message}}
+async function loadAnalytics(token=selectionToken){const group=selectedGroup;if(!group)return;try{const days=Number($('analyticsDays').value||7);const d=await api('/api/groups/'+group+'/analytics?days='+days+(selectedTopic!=null?'&topic_id='+selectedTopic:''));if(group!==selectedGroup||token!==selectionToken)return;$('analyticsPanel').classList.remove('hidden');$('analyticsMessage').textContent=(selectedTopic==null?'Group ':'Topic '+selectedTopic+' · Group ')+selectedGroup+(d.breakdown_partial?' · breakdown limited to latest 1,000 events':'');$('anJoins').textContent=d.joins??0;$('anWarnings').textContent=d.warnings??0;$('anActions').textContent=d.actions??0;$('anDays').textContent=(d.days??days)+'d';renderBars('warningBars',d.warning_reasons||{});renderBars('actionBars',d.actions_by_type||{});$('ovJoins').textContent=d.joins??0;$('ovWarnings').textContent=d.warnings??0;$('ovActions').textContent=d.actions??0}catch(e){$('analyticsMessage').textContent='❌ '+e.message}}
+function renderBars(id,obj){const root=$(id);root.innerHTML='';const entries=Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,8);if(!entries.length){root.innerHTML='<p class="muted">No data.</p>';return}const max=Math.max(...entries.map(x=>Number(x[1])));for(const [k,v] of entries){const el=document.createElement('div');el.style.margin='10px 0';el.innerHTML=`<div class="row" style="justify-content:space-between"><span>${esc(k)}</span><span class="badge">${Number(v)}</span></div><div class="bar"><i style="width:${max?Math.round(Number(v)/max*100):0}%"></i></div>`;root.appendChild(el)}}
+async function loadResources(token=selectionToken){
+  const group=selectedGroup;
+  if(!group)return;
+  try{
+    const d=await api('/api/groups/'+group+'/resources?limit=100'+(selectedTopic!=null?'&topic_id='+selectedTopic:''));
+    if(group!==selectedGroup||token!==selectionToken)return;
+    $('resourcesPanel').classList.remove('hidden');
+    const c=d.counts||{};
+    $('resTotal').textContent=c.total??0;
+    $('resFiles').textContent=c.files??0;
+    $('resUrls').textContent=c.urls??0;
+    $('resFlags').textContent=c.flags??0;
+    const rows=d.resources||[];
+    $('resourceRows').innerHTML=rows.map(r=>{
+      const type=r.mode==='flag'?'Flag':(r.source_kind==='url'?'URL':'File');
+      const source=r.source_kind==='url' && r.source_url
+        ? `<a href="${esc(r.source_url)}" target="_blank" rel="noopener noreferrer">${esc(r.source_url)}</a>`
+        : esc(r.source_kind||'—');
+      const label=r.mode==='flag'
+        ? [r.main_flag,r.sub_flags].filter(Boolean).join(' · ')
+        : (r.caption||r.description||'—');
+      const msg=r.published_message_id!=null
+        ? esc(String(r.published_message_id)+(r.published_extra_message_id!=null?' + '+r.published_extra_message_id:''))
+        : '—';
+      return `<tr><td>${esc(r.created_at||'—')}</td><td><span class="badge">${type}</span></td><td>${source}</td><td>${esc(label)}</td><td>${r.topic_id!=null?esc('Topic '+r.topic_id):'Group'}</td><td>${esc(r.created_by||'—')}</td><td>${msg}</td></tr>`;
+    }).join('')||'<tr><td colspan="7" class="muted">No published resources yet.</td></tr>';
+    $('resourcesMessage').textContent=(selectedTopic==null?'Group ':'Topic '+selectedTopic+' · Group ')+selectedGroup;
+  }catch(e){$('resourcesMessage').textContent='❌ '+e.message}
+}
+async function loadLogs(token=selectionToken){const group=selectedGroup;if(!group)return;try{const d=await api('/api/groups/'+group+'/logs?limit=100'+(selectedTopic!=null?'&topic_id='+selectedTopic:''));if(group!==selectedGroup||token!==selectionToken)return;const rows=d.logs||[];$('logRows').innerHTML=rows.map(r=>`<tr><td>${esc(r.created_at||'—')}</td><td>${esc(r.user_id||'—')}</td><td><span class="badge">${esc(r.action)}</span></td><td>${r.topic_id!=null?esc('Topic '+r.topic_id):'Group'}</td><td>${esc(r.reason||'—')}</td><td>${esc(r.details||'—')}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">No moderation logs.</td></tr>';$('logsMessage').textContent=(selectedTopic==null?'Group ':'Topic '+selectedTopic+' · Group ')+selectedGroup}catch(e){$('logsMessage').textContent='❌ '+e.message}}
+async function loadFilters(token=selectionToken){const group=selectedGroup;if(!group)return;try{const d=await api('/api/groups/'+group+'/filters');if(group!==selectedGroup||token!==selectionToken)return;$('filterRows').innerHTML=(d.filters||[]).map(r=>`<tr><td>${esc(r.filter_type)}</td><td>${esc(r.value)}</td><td><button class="danger deleteFilter" data-id="${esc(r.id)}">Delete</button></td></tr>`).join('')||'<tr><td colspan="3" class="muted">No custom filters.</td></tr>';document.querySelectorAll('.deleteFilter').forEach(b=>b.onclick=()=>deleteFilter(b.dataset.id))}catch(e){$('filterMessage').textContent='❌ '+e.message}}
+async function addFilter(){if(!selectedGroup){$('filterMessage').textContent='Select a group first.';return}const type=$('filterType').value,value=$('filterValue').value.trim();if(!value){$('filterMessage').textContent='Enter a filter value.';return}try{await api('/api/groups/'+selectedGroup+'/filters',{method:'POST',body:JSON.stringify({filter_type:type,value})});$('filterValue').value='';$('filterMessage').textContent='✅ Filter added';await loadFilters()}catch(e){$('filterMessage').textContent='❌ '+e.message}}
+async function deleteFilter(id){if(!await gxConfirm('Delete this custom filter?',{title:'Delete filter',ok:'Delete',danger:true}))return;try{await api('/api/groups/'+selectedGroup+'/filters/'+id,{method:'DELETE'});await loadFilters()}catch(e){$('filterMessage').textContent='❌ '+e.message}}
+async function resetTopicOverrides(){if(selectedTopic==null||!selectedGroup)return;if(!await gxConfirm('Reset all overrides for this topic? It will inherit group settings again.',{title:'Reset topic overrides',ok:'Reset',danger:true}))return;try{await api('/api/groups/'+selectedGroup+'/topics/'+selectedTopic+'/settings',{method:'PATCH',body:JSON.stringify({clear:true})});$('settingsMessage').textContent='✅ Topic overrides reset';await loadSettings()}catch(e){$('settingsMessage').textContent='❌ '+e.message}}
+$('loginBtn').onclick=async()=>{ $('loginError').textContent='';try{const r=await fetch('/api/ghostea?action=login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value.trim(),password:$('password').value})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Login failed');$('password').value='';showApp(d.admin)}catch(e){$('loginError').textContent='❌ '+e.message}};
+$('resourcesRefresh').onclick=loadResources;
+$('username').addEventListener('keydown',e=>{if(e.key==='Enter')$('password').focus()});$('password').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginBtn').click()});$('logoutBtn').onclick=async()=>{await fetch('/api/ghostea?action=logout',{method:'POST'});showLogin()};$('adminsRefresh').onclick=loadAdmins;$('createAdmin').onclick=createAdmin;$('refreshBtn').onclick=loadGroups;$('riskRefresh').onclick=loadRisk;$('usersRefresh').onclick=loadUsers;$('overviewRefresh').onclick=loadGroups;$('addGroupBtn').onclick=()=>{$('addGroupPanel').classList.remove('hidden');$('groupIdInput').focus()};$('cancelAddGroup').onclick=()=>{$('addGroupPanel').classList.add('hidden');$('addGroupMessage').textContent='Enter the Telegram chat ID exactly as Telegram provides it (for supergroups it normally starts with -100). The bot must already be an administrator in that group.'};$('verifyAddGroup').onclick=linkGroup;$('groupIdInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();linkGroup()}});$('saveSettings').onclick=saveSettings;$('resetTopicOverrides').onclick=resetTopicOverrides;$('topicSelector').onchange=()=>selectTopic($('topicSelector').value);$('topicContextClear').onclick=()=>selectTopic('');$('analyticsRefresh').onclick=loadAnalytics;$('logsRefresh').onclick=loadLogs;$('filtersRefresh').onclick=loadFilters;$('addFilter').onclick=addFilter;$('loadUser').onclick=loadUser;$('userId').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();loadUser()}});document.querySelectorAll('[data-user-action]').forEach(b=>b.onclick=()=>userAction(b.dataset.userAction));
+document.querySelectorAll('.navbtn').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.navbtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));$(b.dataset.section).classList.add('active');if(b.dataset.section==='users')await loadUsers();if(b.dataset.section==='risk')await loadRisk();if(b.dataset.section==='admins')await loadAdmins()});
+
+async function loadAdmins(){
+  try{
+    const d=await api('/api/auth/admins');
+    $('adminRows').innerHTML=(d.admins||[]).map(a=>`<tr><td><b>${esc(a.username)}</b><br><span class="muted">${esc(a.display_name)}</span></td><td>${esc(a.role)}</td><td>${a.enabled?'🟢 Enabled':'🔴 Disabled'}</td><td>${esc(a.last_login_at||'Never')}</td><td><button data-admin-edit="${a.id}" data-role="${esc(a.role)}" data-enabled="${a.enabled?'true':'false'}">Edit</button> <button class="danger" data-admin-delete="${a.id}">Delete</button></td></tr>`).join('')||'<tr><td colspan="5" class="muted">No admins.</td></tr>';
+    document.querySelectorAll('[data-admin-edit]').forEach(b=>b.onclick=()=>editAdmin(b.dataset.adminEdit,b.dataset.role,b.dataset.enabled==='true'));
+    document.querySelectorAll('[data-admin-delete]').forEach(b=>b.onclick=()=>deleteAdmin(b.dataset.adminDelete));
+  }catch(e){$('adminsMessage').textContent='❌ '+e.message}
+}
+async function editAdmin(id,currentRole='admin',currentEnabled=true){
+  const role=await gxPrompt('Choose the role for this administrator.', currentRole, {title:'Edit administrator role', type:'select', options:[{value:'super_admin',label:'Super Admin'},{value:'admin',label:'Admin'},{value:'moderator',label:'Moderator'},{value:'viewer',label:'Viewer'}]});
+  if(!role)return;
+  const enabledValue=await gxPrompt('Choose whether this administrator can sign in.', currentEnabled?'enabled':'disabled', {title:'Administrator status', type:'select', options:[{value:'enabled',label:'Enabled'},{value:'disabled',label:'Disabled'}], ok:'Apply'});
+  if(!enabledValue)return;
+  const password=await gxPrompt('Leave blank to keep the current password.', '', {title:'Update password', type:'password', placeholder:'New password (optional)'});
+  if(password===null)return;
+  const body={role,enabled:enabledValue==='enabled'};
+  if(password)body.password=password;
+  try{await api('/api/auth/admins/'+id,{method:'PATCH',body:JSON.stringify(body)});$('adminsMessage').textContent='✅ Admin updated';await loadAdmins()}catch(e){$('adminsMessage').textContent='❌ '+e.message}
+}
+async function deleteAdmin(id){
+  if(!await gxConfirm('Delete this dashboard admin?',{title:'Delete administrator',ok:'Delete',danger:true}))return;
+  try{await api('/api/auth/admins/'+id,{method:'DELETE'});$('adminsMessage').textContent='✅ Admin deleted';await loadAdmins()}catch(e){$('adminsMessage').textContent='❌ '+e.message}
+}
+async function createAdmin(){
+  try{
+    await api('/api/auth/admins',{method:'POST',body:JSON.stringify({
+      username:$('newAdminUsername').value.trim(),
+      display_name:$('newAdminDisplay').value.trim(),
+      password:$('newAdminPassword').value,
+      role:$('newAdminRole').value
+    })});
+    $('newAdminUsername').value='';$('newAdminDisplay').value='';$('newAdminPassword').value='';
+    $('adminsMessage').textContent='✅ Admin created';await loadAdmins();
+  }catch(e){$('adminsMessage').textContent='❌ '+e.message}
+}
+fetch('/api/ghostea?path=%2Fapi%2Fhealth').then(async r=>{
+  if(r.status===401){showLogin();return}
+  if(!r.ok){showLogin();return}
+  try{const me=await api('/api/auth/me');showApp(me.admin)}catch{showLogin()}
+}).catch(showLogin);
+
+async function loadRisk(token=selectionToken){
+  const group=selectedGroup;if(!group){$('riskMessage').textContent='Select a group first.';return}
+  try{
+    const days=Number($('riskDays').value||7);
+    const d=await api('/api/groups/'+group+'/risk?days='+days+(selectedTopic!=null?'&topic_id='+selectedTopic:''));
+    if(group!==selectedGroup||token!==selectionToken)return;
+    $('riskPanel').classList.remove('hidden');
+    $('riskMessage').textContent='Advisory risk view for '+(selectedTopic==null?'group '+selectedGroup:'topic '+selectedTopic+' · group '+selectedGroup);
+    const users=d.users||[];
+    $('riskUsers').textContent=d.total_users??users.length;
+    $('riskHigh').textContent=d.high_critical_users??users.filter(x=>x.risk_level==='high'||x.risk_level==='critical').length;
+    $('riskEvents').textContent=d.sampled_events??users.reduce((n,x)=>n+Number(x.events||0),0);
+    $('riskPeriod').textContent=(d.days??days)+'d';
+    $('riskRows').innerHTML=users.slice(0,20).map(x=>`<tr><td>${esc(x.user_id)}</td><td><b>${Number(x.risk_score||0)}</b></td><td>${esc(riskLevels[x.risk_level]||x.risk_level||'—')}</td><td>${Number(x.warnings||0)}</td><td>${Number(x.events||0)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">No risk activity.</td></tr>';
+    renderBars('riskBars',d.category_breakdown||{});
+  }catch(e){$('riskMessage').textContent='❌ '+e.message}
+}
+
+async function loadUsers(token=selectionToken){
+  const group=selectedGroup;if(!group){$('userMessage').textContent='Select a group first.';return}
+  try{
+    const d=await api('/api/groups/'+group+'/users?limit=100');
+    if(group!==selectedGroup||token!==selectionToken)return;
+    const rows=d.users||[];
+    $('userRows').innerHTML=rows.map(x=>`<tr><td>${esc(x.user_id)}</td><td>${Number(x.warnings||0)}</td><td>${Number(x.actions||0)}</td><td>${Number(x.reputation||0)}</td><td>${esc(x.last_activity||'—')}</td><td><button class="selectUser" data-id="${esc(x.user_id)}">View</button></td></tr>`).join('')||'<tr><td colspan="6" class="muted">No users recorded yet.</td></tr>';
+    document.querySelectorAll('.selectUser').forEach(b=>b.onclick=()=>{$('userId').value=b.dataset.id;loadUser()});
+  }catch(e){$('userMessage').textContent='❌ '+e.message}
+}
+
+async function loadUser(){
+  if(!selectedGroup){$('userMessage').textContent='Select a group first.';return}
+  const id=$('userId').value.trim();
+  if(!/^-?\d+$/.test(id)){ $('userMessage').textContent='Enter a numeric Telegram user ID.'; return }
+  $('userMessage').textContent='Loading user…';
+  try{
+    const d=await api('/api/groups/'+selectedGroup+'/users/'+id+'/profile');
+    $('userProfile').classList.remove('hidden');
+    $('uWarnings').textContent=d.warnings??0;
+    $('uRep').textContent=d.reputation?.score??0;
+    $('uRisk').textContent=(d.risk?.risk_score??0)+' • '+(d.risk?.risk_level||'low');
+    $('uStatus').textContent=d.telegram?.status||'not found';
+    const u=d.telegram?.user;
+    $('uUser').textContent=u?(u.username?'@'+u.username:(u.first_name||u.id)):'—';
+    $('uWarningHistory').innerHTML=(d.warning_history||[]).map(x=>`<div class="notice"><b>${esc(x.reason||'—')}</b><br><span class="muted">${esc(x.created_at||'')}</span></div>`).join('')||'<p class="muted">No warning history.</p>';
+    $('uLogs').innerHTML=(d.moderation_logs||[]).map(x=>`<div class="notice"><b>${esc(x.action||'—')}</b> · ${esc(x.reason||'')}<br><span class="muted">${esc(x.created_at||'')}</span></div>`).join('')||'<p class="muted">No moderation history.</p>';
+    $('userMessage').textContent='✅ User loaded';
+  }catch(e){$('userMessage').textContent='❌ '+e.message}
+}
+async function userAction(action){
+  if(!selectedGroup){$('userMessage').textContent='Select a group first.';return}
+  const id=$('userId').value.trim();
+  if(!/^-?\d+$/.test(id)){ $('userMessage').textContent='Enter a numeric Telegram user ID.'; return }
+  const actionKey=selectedGroup+':'+id;
+  if(pendingUserActions.has(actionKey)){$('userMessage').textContent='Another action for this user is already running.';return}
+  if((action==='ban') && !(await gxConfirm('Permanently ban this user?',{title:'Permanent ban',ok:'Ban user',danger:true})))return;
+  if((action==='reset_warnings') && !(await gxConfirm('Reset all warnings for this user?',{title:'Reset warnings',ok:'Reset',danger:true})))return;
+  pendingUserActions.add(actionKey);
+  try{
+    const body={user_id:Number(id),action,reason:$('userReason').value.trim(),minutes:Number($('userMinutes').value||10)};
+    const result=await api('/api/groups/'+selectedGroup+'/users',{method:'POST',body:JSON.stringify(body)});
+    if(result.admin_action?.result==='punishment_failed') $('userMessage').textContent='⚠️ Warning recorded, but '+String(result.admin_action.action||'punishment')+' failed. Refresh/retry when bot permissions recover.';
+    else $('userMessage').textContent='✅ '+action+' completed';
+    await loadUser();
+    await loadGroups();
+  }catch(e){$('userMessage').textContent='❌ '+e.message}
+  finally{pendingUserActions.delete(actionKey)}
+}
+
+</script>
+
+<script id="ghostea-custom-dialog-ui">
+/* Ghostea UI dialog controller: confirmations, prompts, alerts and all select pickers. */
+(()=>{
+  const escHtml=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const base=(title,message,body,actions,extraClass='',returnFocus=null)=>{
+    const b=document.createElement('div');
+    b.className='gx-dialog-backdrop '+extraClass;
+    const uid='gx-'+Math.random().toString(36).slice(2,10);
+    b.innerHTML=`<div class="gx-dialog" role="dialog" aria-modal="true" aria-labelledby="${uid}-title" aria-describedby="${uid}-text">
+      <h2 id="${uid}-title" class="gx-dialog-title">${escHtml(title)}</h2>
+      <p id="${uid}-text" class="gx-dialog-text">${escHtml(message)}</p>
+      ${body||''}
+      ${actions?`<div class="gx-dialog-actions">${actions}</div>`:''}
+    </div>`;
+    document.body.appendChild(b);
+    const box=b.querySelector('.gx-dialog');
+    const focusables=()=>Array.from(box.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')).filter(x=>x.offsetParent!==null);
+    const first=focusables()[0];
+    if(first) setTimeout(()=>first.focus(),0);
+    const close=()=>{b.remove();if(returnFocus&&document.contains(returnFocus))setTimeout(()=>returnFocus.focus(),0);};
+    b.addEventListener('click',e=>{if(e.target===b)close()});
+    box.addEventListener('keydown',e=>{
+      if(e.key==='Escape'){e.preventDefault();close();return}
+      if(e.key!=='Tab')return;
+      const list=focusables();if(!list.length)return;
+      const index=list.indexOf(document.activeElement);
+      if(e.shiftKey&&index<=0){e.preventDefault();list[list.length-1].focus()}
+      else if(!e.shiftKey&&index===list.length-1){e.preventDefault();list[0].focus()}
+    });
+    return {b,box,close};
+  };
+
+  window.gxConfirm=(message,opts={})=>new Promise(resolve=>{
+    const danger=opts.danger?'gx-danger':'';
+    const d=base(opts.title||'Confirm action',message,'',
+      `<button type="button" data-cancel>Cancel</button><button type="button" class="${danger||'gx-primary'}" data-ok>${escHtml(opts.ok||'Continue')}</button>`);
+    d.box.querySelector('[data-cancel]').onclick=()=>{d.close();resolve(false)};
+    d.box.querySelector('[data-ok]').onclick=()=>{d.close();resolve(true)};
+  });
+
+  window.gxPrompt=(message,defaultValue='',opts={})=>new Promise(resolve=>{
+    let body='';
+    if(opts.type==='select'){
+      body=`<div class="gx-select-options" data-value>`;
+      body+=(opts.options||[]).map((x,i)=>`<button type="button" class="gx-select-option ${String(x.value)===String(defaultValue)?'is-selected':''}" data-option="${escHtml(x.value)}">
+        <span>${escHtml(x.label)}</span><span class="gx-select-option-mark">${String(x.value)===String(defaultValue)?'✓':''}</span>
+      </button>`).join('');
+      body+='</div>';
+    }else{
+      body=`<input class="gx-dialog-input" data-value type="${opts.type==='password'?'password':'text'}" value="${escHtml(defaultValue)}" placeholder="${escHtml(opts.placeholder||'')}">`;
+    }
+    const d=base(opts.title||'Enter value',message,body,
+      `<button type="button" data-cancel>Cancel</button><button type="button" class="gx-primary" data-ok>${escHtml(opts.ok||'Save')}</button>`);
+    if(opts.type==='select'){
+      d.box.querySelectorAll('[data-option]').forEach(btn=>btn.onclick=()=>{
+        d.box.querySelectorAll('[data-option]').forEach(x=>x.classList.remove('is-selected'));
+        btn.classList.add('is-selected');
+        d.box.dataset.selected=btn.dataset.option;
+        btn.querySelector('.gx-select-option-mark').textContent='✓';
+        d.box.querySelectorAll('.gx-select-option-mark').forEach(x=>{if(x!==btn.querySelector('.gx-select-option-mark'))x.textContent=''});
+      });
+    }
+    const submit=()=>{
+      let v;
+      if(opts.type==='select') v=d.box.dataset.selected ?? defaultValue;
+      else v=d.box.querySelector('[data-value]').value.trim();
+      d.close();resolve(v);
+    };
+    d.box.querySelector('[data-cancel]').onclick=()=>{d.close();resolve(null)};
+    d.box.querySelector('[data-ok]').onclick=submit;
+    const value=d.box.querySelector('[data-value]');
+    if(value) value.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submit()}});
+    if(opts.type==='select') d.box.dataset.selected=defaultValue;
+  });
+
+  window.gxAlert=(message,opts={})=>new Promise(resolve=>{
+    const d=base(opts.title||'Notice',message,'',
+      `<button type="button" class="gx-primary" data-ok>${escHtml(opts.ok||'OK')}</button>`);
+    d.box.querySelector('[data-ok]').onclick=()=>{d.close();resolve(true)};
+  });
+
+  function labelFor(select){
+    const explicit=select.getAttribute('aria-label');
+    if(explicit)return explicit;
+    const id=select.id;
+    if(id){
+      const l=document.querySelector(`label[for="${CSS.escape(id)}"]`);
+      if(l)return l.textContent.trim();
+    }
+    const parent=select.closest('.field,.setting,.section-title');
+    const l=parent?.querySelector('label,h2,h3');
+    return l?.textContent.trim()||'Choose an option';
+  }
+
+  function syncSelect(select){
+    const wrap=select.nextElementSibling;
+    if(!wrap?.classList.contains('gx-select-wrap'))return;
+    const trigger=wrap.querySelector('.gx-select-trigger');
+    const value=wrap.querySelector('.gx-select-value');
+    const opt=Array.from(select.options).find(o=>o.value===select.value) || select.options[select.selectedIndex];
+    if(value)value.textContent=opt?.textContent?.trim()||'Select…';
+    if(trigger)trigger.setAttribute('aria-label',`${labelFor(select)}: ${opt?.textContent?.trim()||'Select'}`);
+  }
+
+  function openSelect(select){
+    const options=Array.from(select.options);
+    const title=labelFor(select);
+    const body=`<div class="gx-select-options">${options.map(o=>`
+      <button type="button" class="gx-select-option ${o.value===select.value?'is-selected':''}" data-select-value="${escHtml(o.value)}">
+        <span>${escHtml(o.textContent.trim())}</span>
+        <span class="gx-select-option-mark">${o.value===select.value?'✓':''}</span>
+      </button>`).join('')}</div>`;
+    const d=base(title,'Select an option',body,`<button type="button" data-cancel>Cancel</button>`,'gx-select-dialog',select.nextElementSibling?.querySelector('.gx-select-trigger'));
+    d.box.querySelector('[data-cancel]').onclick=()=>d.close();
+    d.box.querySelectorAll('[data-select-value]').forEach(btn=>{
+      btn.onclick=()=>{
+        const v=btn.dataset.selectValue;
+        select.value=v;
+        select.dispatchEvent(new Event('change',{bubbles:true}));
+        syncSelect(select);
+        d.close();
+      };
+    });
+  }
+
+  function enhanceSelect(select){
+    if(select.dataset.gxEnhanced==='1')return;
+    select.dataset.gxEnhanced='1';
+    select.classList.add('gx-native-select');
+    select.tabIndex=-1;
+    const wrap=document.createElement('div');
+    wrap.className='gx-select-wrap';
+    const trigger=document.createElement('button');
+    trigger.type='button';
+    trigger.className='gx-select-trigger';
+    trigger.setAttribute('aria-haspopup','dialog');
+    trigger.innerHTML='<span class="gx-select-value"></span><span class="gx-select-chevron" aria-hidden="true"></span>';
+    wrap.appendChild(trigger);
+    select.after(wrap);
+    trigger.onclick=()=>openSelect(select);
+    syncSelect(select);
+  }
+
+  function enhanceAllSelects(){
+    document.querySelectorAll('select:not(.gx-native-select)').forEach(enhanceSelect);
+  }
+
+  /* Keep custom triggers in sync when existing dashboard code changes select.value. */
+  const desc=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value');
+  if(desc?.get && desc?.set){
+    Object.defineProperty(HTMLSelectElement.prototype,'value',{
+      configurable:desc.configurable,enumerable:desc.enumerable,
+      get:desc.get,
+      set:function(v){desc.set.call(this,v);syncSelect(this);}
+    });
+  }
+
+  enhanceAllSelects();
+})();
+</script>
+
+</body>
+</html>
+

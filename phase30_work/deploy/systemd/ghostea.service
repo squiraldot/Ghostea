@@ -1,0 +1,31 @@
+[Unit]
+Description=Ghostea Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ghostea
+Group=ghostea
+WorkingDirectory=/opt/ghostea
+EnvironmentFile=/etc/ghostea/ghostea.env
+ExecStart=/opt/ghostea/.venv/bin/python /opt/ghostea/main.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+ReadWritePaths=/opt/ghostea/data
+
+[Install]
+WantedBy=multi-user.target
