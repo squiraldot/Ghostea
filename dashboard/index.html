@@ -793,6 +793,28 @@ dialog::backdrop{background:rgba(2,5,7,.76);backdrop-filter:blur(13px);-webkit-b
         <span id="topicContextMeta" class="badge">Group-wide</span>
         <button id="topicContextClear" type="button">Group view</button>
       </div>
+      <section id="operations" class="section">
+        <div class="card hero-card">
+          <div class="section-title"><div><p class="section-kicker">Phase 32</p><h2>Operations</h2></div><button id="operationsRefresh">Refresh</button></div>
+          <p id="operationsMessage" class="muted">Live service health, queue state, alerts and recent operational events.</p>
+          <div class="stats" style="margin-top:12px">
+            <div class="stat"><strong id="opStatus">—</strong><span>Service status</span></div>
+            <div class="stat"><strong id="opDb">—</strong><span>Database</span></div>
+            <div class="stat"><strong id="opSchema">—</strong><span>Schema version</span></div>
+            <div class="stat"><strong id="opAlerts">—</strong><span>Active alerts</span></div>
+            <div class="stat"><strong id="opQueue">—</strong><span>Queued jobs</span></div>
+            <div class="stat"><strong id="opDead">—</strong><span>Dead jobs</span></div>
+            <div class="stat"><strong id="opWorker">—</strong><span>Worker</span></div>
+            <div class="stat"><strong id="opErrors">—</strong><span>Errors · 5m</span></div>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="card"><div class="section-title"><h3>Active alerts</h3></div><div id="opAlertRows" class="scroll" style="max-height:360px"></div></div>
+          <div class="card"><div class="section-title"><h3>Deployment</h3></div><div id="opDeployment" class="setting"></div><div class="section-title" style="margin-top:14px"><h3>Cache</h3></div><div id="opCache" class="scroll" style="max-height:220px"></div></div>
+        </div>
+        <div class="card"><div class="section-title"><h3>Recent operational events</h3></div><div class="scroll"><table class="table"><thead><tr><th>Time</th><th>Level</th><th>Event</th><th>Request</th><th>Details</th></tr></thead><tbody id="opEventRows"></tbody></table></div></div>
+      </section>
+
       <section id="overview" class="section active">
         <div class="card hero-card"><p class="section-kicker">Workspace</p><div class="section-title"><h2>Groups</h2><div class="row"><button id="addGroupBtn" class="primary">＋ Add Group</button><button id="overviewRefresh">Refresh</button></div></div><p class="muted">Link a Telegram group by ID. Ghostea verifies that the bot is currently an administrator before linking it.</p>
         <div id="addGroupPanel" class="card hidden" style="margin:0 0 14px;background:rgba(184,242,109,.035);border-color:rgba(184,242,109,.16)">
@@ -1015,6 +1037,28 @@ async function linkGroup(){
   }catch(e){msg.textContent='❌ '+e.message}
   finally{$('verifyAddGroup').disabled=false}
 }
+async function loadOperations(){
+  try{
+    const d=await api('/api/operations');
+    const alerts=d.alerts||[], q=d.queue||{}, dep=d.deployment||{}, obs=d.observability||{};
+    $('opStatus').textContent=d.ok?'HEALTHY':(alerts.some(a=>a.severity==='critical')?'CRITICAL':'DEGRADED');
+    $('opDb').textContent=d.database?.healthy?'OK':'ERROR';
+    $('opSchema').textContent=d.database?.schema_version??'—';
+    $('opAlerts').textContent=alerts.length;
+    $('opQueue').textContent=Number(q.pending||0)+Number(q.running||0);
+    $('opDead').textContent=q.dead??0;
+    $('opWorker').textContent=q.worker_running?'RUNNING':'STOPPED';
+    $('opErrors').textContent=obs.recent_error_events_5m??0;
+    $('operationsMessage').textContent='Generated '+esc(d.generated_at||'—')+' · '+esc(dep.mode||'managed')+' · '+esc(dep.update_mode||'polling');
+    $('opAlertRows').innerHTML=alerts.length?alerts.map(a=>`<div class="notice"><b>${esc(String(a.severity||'').toUpperCase())}</b> · ${esc(a.message)}${a.details&&Object.keys(a.details).length?`<div class="muted" style="margin-top:5px">${esc(JSON.stringify(a.details))}</div>`:''}</div>`).join(''):'<div class="empty-state">No active operational alerts. ✅</div>';
+    $('opDeployment').innerHTML=`<div class="row" style="justify-content:space-between"><span>Mode</span><span class="badge">${esc(dep.mode||'—')}</span></div><div class="row" style="justify-content:space-between;margin-top:8px"><span>Database</span><span>${esc(dep.database_provider||'—')}</span></div><div class="row" style="justify-content:space-between;margin-top:8px"><span>Storage</span><span>${esc(dep.storage_provider||'—')}</span></div><div class="row" style="justify-content:space-between;margin-top:8px"><span>Dashboard</span><span>${esc(dep.dashboard_host||'—')}</span></div><div class="row" style="justify-content:space-between;margin-top:8px"><span>Updates</span><span>${esc(dep.update_mode||'—')}</span></div>`;
+    const cache=Object.entries(d.cache||{});
+    $('opCache').innerHTML=cache.length?cache.map(([name,v])=>`<div class="notice"><div class="row" style="justify-content:space-between"><b>${esc(name)}</b><span class="badge">${Number(v.entries||0)} entries</span></div><div class="muted" style="margin-top:5px">hits ${Number(v.hits||0)} · misses ${Number(v.misses||0)} · evictions ${Number(v.evictions||0)}</div></div>`).join(''):'<div class="empty-state">No cache statistics.</div>';
+    const events=obs.recent_events||[];
+    $('opEventRows').innerHTML=events.length?events.slice().reverse().map(e=>{const details=Object.entries(e).filter(([k])=>!['ts','event','level','request_id'].includes(k)).map(([k,v])=>k+'='+JSON.stringify(v)).join(' · ');return `<tr><td>${esc(new Date(Number(e.ts||0)*1000).toLocaleString())}</td><td><span class="badge">${esc(e.level||'INFO')}</span></td><td>${esc(e.event||'—')}</td><td>${esc(e.request_id||'—')}</td><td>${esc(details||'—')}</td></tr>`}).join(''):'<tr><td colspan="5" class="muted">No recent events.</td></tr>';
+    $('status').textContent=d.ok?'🟢 Operational':'🟠 Attention required';$('status').className='badge '+(d.ok?'ok':'error');
+  }catch(e){$('operationsMessage').textContent='❌ '+e.message;$('opStatus').textContent='UNAVAILABLE'}
+}
 async function loadGroups(){try{const h=await api('/api/health');$('status').textContent='🟢 API online • DB '+(h.database?'OK':'ERROR');$('status').className='badge ok';const d=await api('/api/groups');const groups=d.groups||[];window.__ghosteaGroups=groups;$('groups').innerHTML='';if(!groups.length){$('groups').innerHTML='<div class="notice muted">No configured groups yet. Add the bot to a group and let it process a message.</div>';return}for(const g of groups){const c=document.createElement('div');c.className='card';const kind=g.chat_type==='group'?'Group':(g.is_forum?'Forum Supergroup':'Supergroup');const visibilityBadge=`<span class="badge">${g.visibility==='public'?'Public':'Private'}</span>`;const forumBadge=g.is_forum?'<span class="badge">Topics enabled</span>':'';const identity=g.public_url?`<a class="muted" href="${esc(g.public_url)}" target="_blank" rel="noopener noreferrer">@${esc(g.username)}</a>`:'No public username';c.innerHTML=`<div class="section-title"><h3>${kind} ${esc(g.chat_id)}</h3><div class="topic-meta">${visibilityBadge}${forumBadge}<span class="badge">limit ${Number(g.max_warnings||0)}</span></div></div><p class="muted">${identity} · Abuse ${g.abuse_filter_enabled?'ON':'OFF'} · Spam ${g.spam_filter_enabled?'ON':'OFF'} · Anti-Raid ${g.antiraid_enabled?'ON':'OFF'}</p><button data-group="${esc(g.chat_id)}" class="selectGroup">Manage group</button>`;$('groups').appendChild(c)}document.querySelectorAll('.selectGroup').forEach(b=>b.onclick=()=>selectGroup(b.dataset.group));if(selectedGroup)selectGroup(selectedGroup)}catch(e){$('status').textContent='🔴 '+e.message;$('status').className='badge error'}}
 async function loadTopics(token=selectionToken){const group=selectedGroup;if(!group){topics=[];return}try{const d=await api('/api/groups/'+group+'/topics?limit=200');if(group!==selectedGroup||token!==selectionToken)return;topics=d.topics||[];renderTopicSelector()}catch(e){topics=[];renderTopicSelector();$('topicContextMeta').textContent='Topic data unavailable'}}
 function renderTopicSelector(){const bar=$('topicContextBar');if(!selectedChatMeta?.is_forum){bar.style.display='none';selectedTopic=null;return}bar.style.display='flex';const opts=['<option value="">Group-wide</option>'].concat(topics.map(t=>`<option value="${esc(t.topic_id)}">${esc(t.name||('Topic '+t.topic_id))}${t.is_closed?' · closed':''}</option>`));$('topicSelector').innerHTML=opts.join('');$('topicSelector').value=selectedTopic==null?'':String(selectedTopic);$('topicContextMeta').textContent=selectedTopic==null?'Group-wide':'Topic '+selectedTopic;$('topicContextClear').classList.toggle('hidden',selectedTopic==null)}
@@ -1059,9 +1103,9 @@ async function addFilter(){if(!selectedGroup){$('filterMessage').textContent='Se
 async function deleteFilter(id){if(!await gxConfirm('Delete this custom filter?',{title:'Delete filter',ok:'Delete',danger:true}))return;try{await api('/api/groups/'+selectedGroup+'/filters/'+id,{method:'DELETE'});await loadFilters()}catch(e){$('filterMessage').textContent='❌ '+e.message}}
 async function resetTopicOverrides(){if(selectedTopic==null||!selectedGroup)return;if(!await gxConfirm('Reset all overrides for this topic? It will inherit group settings again.',{title:'Reset topic overrides',ok:'Reset',danger:true}))return;try{await api('/api/groups/'+selectedGroup+'/topics/'+selectedTopic+'/settings',{method:'PATCH',body:JSON.stringify({clear:true})});$('settingsMessage').textContent='✅ Topic overrides reset';await loadSettings()}catch(e){$('settingsMessage').textContent='❌ '+e.message}}
 $('loginBtn').onclick=async()=>{ $('loginError').textContent='';try{const r=await fetch('/api/ghostea?action=login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value.trim(),password:$('password').value})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Login failed');$('password').value='';showApp(d.admin)}catch(e){$('loginError').textContent='❌ '+e.message}};
-$('resourcesRefresh').onclick=loadResources;
+$('resourcesRefresh').onclick=loadResources;$('operationsRefresh').onclick=loadOperations;
 $('username').addEventListener('keydown',e=>{if(e.key==='Enter')$('password').focus()});$('password').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginBtn').click()});$('logoutBtn').onclick=async()=>{await fetch('/api/ghostea?action=logout',{method:'POST'});showLogin()};$('adminsRefresh').onclick=loadAdmins;$('createAdmin').onclick=createAdmin;$('refreshBtn').onclick=loadGroups;$('riskRefresh').onclick=loadRisk;$('usersRefresh').onclick=loadUsers;$('overviewRefresh').onclick=loadGroups;$('addGroupBtn').onclick=()=>{$('addGroupPanel').classList.remove('hidden');$('groupIdInput').focus()};$('cancelAddGroup').onclick=()=>{$('addGroupPanel').classList.add('hidden');$('addGroupMessage').textContent='Enter the Telegram chat ID exactly as Telegram provides it (for supergroups it normally starts with -100). The bot must already be an administrator in that group.'};$('verifyAddGroup').onclick=linkGroup;$('groupIdInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();linkGroup()}});$('saveSettings').onclick=saveSettings;$('resetTopicOverrides').onclick=resetTopicOverrides;$('topicSelector').onchange=()=>selectTopic($('topicSelector').value);$('topicContextClear').onclick=()=>selectTopic('');$('analyticsRefresh').onclick=loadAnalytics;$('logsRefresh').onclick=loadLogs;$('filtersRefresh').onclick=loadFilters;$('addFilter').onclick=addFilter;$('loadUser').onclick=loadUser;$('userId').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();loadUser()}});document.querySelectorAll('[data-user-action]').forEach(b=>b.onclick=()=>userAction(b.dataset.userAction));
-document.querySelectorAll('.navbtn').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.navbtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));$(b.dataset.section).classList.add('active');if(b.dataset.section==='users')await loadUsers();if(b.dataset.section==='risk')await loadRisk();if(b.dataset.section==='admins')await loadAdmins()});
+document.querySelectorAll('.navbtn').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.navbtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));$(b.dataset.section).classList.add('active');if(b.dataset.section==='users')await loadUsers();if(b.dataset.section==='risk')await loadRisk();if(b.dataset.section==='admins')await loadAdmins();if(b.dataset.section==='operations')await loadOperations()});
 
 async function loadAdmins(){
   try{

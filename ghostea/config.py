@@ -104,3 +104,14 @@ GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES = _env_int("GHOSTEA_DASHBOARD_CACHE_MAX_ENTR
 # PHASE 10 — User management
 # ============================================================
 USER_MANAGEMENT_MAX_LOGS = 100
+
+# Phase 32 — operational alert thresholds.
+GHOSTEA_ALERT_PENDING_AGE_SECONDS = _env_int(
+    "GHOSTEA_ALERT_PENDING_AGE_SECONDS", 300, minimum=60, maximum=86400
+)
+GHOSTEA_ALERT_DEAD_JOBS = _env_int(
+    "GHOSTEA_ALERT_DEAD_JOBS", 1, minimum=1, maximum=1000
+)
+GHOSTEA_ALERT_RECENT_ERRORS = _env_int(
+    "GHOSTEA_ALERT_RECENT_ERRORS", 3, minimum=1, maximum=100
+)

@@ -244,6 +244,7 @@ def create_application():
                 production_readiness=application.bot_data.get("production_readiness", {}),
                 permission_service=permission_service,
                 telegram_update_callback=enqueue_webhook_update,
+                background_jobs=background_jobs,
             )
             server.bot = application.bot
             application.bot_data["web_server"] = server

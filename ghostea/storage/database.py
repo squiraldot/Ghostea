@@ -165,7 +165,8 @@ class SupabaseREST:
     def count(self, table, query=None):
         """Return an exact PostgREST row count without downloading the table."""
         query = dict(query or {})
-        query.setdefault("select", "id")
+        # Use a provider-neutral projection: not every Ghostea table has an id column.
+        query.setdefault("select", "*")
         url = f"{self.base}/{table}?" + urllib.parse.urlencode(query, doseq=True)
         headers = {
             "apikey": self.key,
@@ -192,5 +193,5 @@ class SupabaseREST:
 
     def health_check(self):
         """Perform a lightweight PostgREST table probe for connectivity."""
-        self.select("ghostea_schema_meta", {"select": "id", "limit": "0"})
+        self.select("ghostea_schema_meta", {"select": "schema_name", "limit": "0"})
         return True

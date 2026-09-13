@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 const SESSION_TTL = 8 * 60 * 60;
-const ALLOWED_GET = new Set(["/api/health", "/api/groups"]);
+const ALLOWED_GET = new Set(["/api/health", "/api/groups", "/api/operations"]);
 const LOGIN_WINDOW_MS = 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
 const MIN_SECRET_LENGTH = 32;

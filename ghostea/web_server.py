@@ -22,6 +22,7 @@ from ghostea.services.chat_visibility import visibility_from_registry
 from ghostea.services.observability import OBSERVABILITY, new_request_id, set_request_id, reset_request_id
 from ghostea.services.cache import TTLCache
 from ghostea.config import GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES, GHOSTEA_DASHBOARD_CACHE_TTL_SECONDS
+from ghostea.services.operations import build_operations_snapshot
 
 
 MAX_BODY_BYTES = 32 * 1024
@@ -113,6 +114,9 @@ def _is_vps_dashboard():
     return (
         os.getenv("GHOSTEA_DEPLOYMENT_MODE", "managed").strip().lower() == "self_hosted"
         and os.getenv("GHOSTEA_DASHBOARD_HOST", "vercel").strip().lower() == "vps"
+    ) or (
+        os.getenv("GHOSTEA_DEPLOYMENT_MODE", "managed").strip().lower() == "custom"
+        and os.getenv("GHOSTEA_DASHBOARD_HOST", "vercel").strip().lower() == "vps"
     )
 
 
@@ -191,6 +195,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     _rate = defaultdict(deque)
     _cache = TTLCache(GHOSTEA_DASHBOARD_CACHE_MAX_ENTRIES, GET_CACHE_TTL)
     telegram_update_callback = None
+    background_jobs = None
 
     def log_message(self, fmt, *args):
         return
@@ -402,19 +407,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self._local_dashboard_proxy():
             return
 
-        if path == "/health":
-            # Build the same health response headers as GET, but do not write
-            # the JSON body. This makes UptimeRobot's default HEAD monitor
-            # receive a clean 200 instead of BaseHTTPRequestHandler's 501.
-            body = json.dumps({
-                "ok": True,
-                "service": "ghostea",
-                "status": "running",
-            }).encode("utf-8")
+        if path in ("/health", "/health/ready"):
+            # Build a body for status calculation and send only headers for HEAD.
+            if path == "/health":
+                ready_status = 200
+                body_payload = {"ok": True, "service": "ghostea", "status": "running"}
+            else:
+                try:
+                    table_status = self._call_sync(self.store.db.check_tables, ["ghostea_schema_meta", "ghostea_chat_registry", "ghostea_group_settings"])
+                    db_ok = all(table_status.values())
+                    readiness = getattr(self.server, "production_readiness", {})
+                    ready_status = 200 if db_ok and bool(readiness.get("ready", True)) else 503
+                    body_payload = {
+                        "ok": ready_status == 200, "service": "ghostea",
+                        "status": "ready" if ready_status == 200 else "not_ready",
+                        "database": db_ok, "production_ready": bool(readiness.get("ready", True)),
+                    }
+                except Exception:
+                    ready_status = 503
+                    body_payload = {"ok": False, "service": "ghostea", "status": "not_ready"}
+            body = json.dumps(body_payload).encode("utf-8")
             origin = _configured_origin()
             request_origin = self.headers.get("Origin", "").strip().rstrip("/")
 
-            self.send_response(200)
+            self.send_response(ready_status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
@@ -683,6 +699,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "status": "running",
             })
 
+        if path == "/health/ready":
+            try:
+                table_status = self._call_sync(self.store.db.check_tables, ["ghostea_schema_meta", "ghostea_chat_registry", "ghostea_group_settings"])
+                db_ok = all(table_status.values())
+                readiness = getattr(self.server, "production_readiness", {})
+                ready = db_ok and bool(readiness.get("ready", True))
+                return _json(self, 200 if ready else 503, {
+                    "ok": ready,
+                    "service": "ghostea",
+                    "status": "ready" if ready else "not_ready",
+                    "database": db_ok,
+                    "production_ready": bool(readiness.get("ready", True)),
+                })
+            except Exception:
+                return _json(self, 503, {"ok": False, "service": "ghostea", "status": "not_ready"})
+
         if not self._protected():
             return
 
@@ -709,6 +741,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 rows = self._run_async(self.admins.list_admins())
                 return _json(self, 200, {"admins": rows})
+
+            if path == "/api/operations":
+                if not self._require_permission("read"):
+                    return
+                return _json(self, 200, build_operations_snapshot(
+                    self.store.db,
+                    observability=OBSERVABILITY,
+                    background_jobs=type(self).background_jobs,
+                    readiness=getattr(self.server, "production_readiness", {}),
+                ))
 
             if path == "/api/diagnostics":
                 if not self._require_permission("read"):
@@ -739,12 +781,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 schema_ok = all(table_status.values())
                 readiness = getattr(self.server, "production_readiness", {})
+                schema_version = None
+                if table_status.get("ghostea_schema_meta"):
+                    try:
+                        meta = self._call_sync(
+                            self.store.db.select,
+                            "ghostea_schema_meta",
+                            {"select": "schema_name,schema_version", "schema_name": "eq.ghostea", "limit": "1"},
+                        )
+                        if meta:
+                            schema_version = meta[0].get("schema_version")
+                    except Exception:
+                        schema_version = None
                 return _json(self, 200 if schema_ok else 503, {
                     "ok": schema_ok,
                     "service": "ghostea",
                     "database": schema_ok,
                     "schema": {
-                        "version": 9 if table_status.get("ghostea_schema_meta") else None,
+                        "version": schema_version,
                         "tables": table_status,
                     },
                     "production_ready": bool(readiness.get("ready", True)) and schema_ok,
@@ -1437,7 +1491,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return _json(self, 500, {"error": "internal_server_error"})
 
 
-def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=None, production_readiness=None, permission_service=None, telegram_update_callback=None):
+def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=None, production_readiness=None, permission_service=None, telegram_update_callback=None, background_jobs=None):
     from ghostea.config import PORT
     port = PORT
     DashboardHandler.store = store
@@ -1448,6 +1502,7 @@ def start_web_server(store, analytics, bot=None, risk=None, admins=None, loop=No
     DashboardHandler.permission_service = permission_service
     DashboardHandler._async_loop = loop
     DashboardHandler.telegram_update_callback = telegram_update_callback
+    DashboardHandler.background_jobs = background_jobs
 
     server = ThreadingHTTPServer(("0.0.0.0", port), DashboardHandler)
     server.production_readiness = production_readiness or {}

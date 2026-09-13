@@ -523,3 +523,11 @@ Ghostea uses bounded process-local TTL/LRU caches for hot read-mostly state and 
 - Admin bootstrap usernames now use the same strict grammar as dashboard admin accounts.
 - Stored scrypt verification parameters are bounded before hashing to prevent resource-exhaustion hashes.
 - No database migration is required for Phase 31.
+
+## Phase 32 — Monitoring, alerting and operations
+- `GET /health` is the public process liveness endpoint; keep it monitored by UptimeRobot.
+- `GET /health/ready` is a public readiness endpoint that checks core database tables and local readiness; it returns 503 when the service is not ready and can be used for a deeper UptimeRobot monitor.
+- Authenticated dashboard operators can use `/api/operations` for provider-neutral health, schema version, background queue, cache, readiness, alerts and recent bounded telemetry.
+- Alert thresholds are configurable with `GHOSTEA_ALERT_PENDING_AGE_SECONDS`, `GHOSTEA_ALERT_DEAD_JOBS`, and `GHOSTEA_ALERT_RECENT_ERRORS`.
+- No new database migration is required for Phase 32.
+- For custom deployments with `GHOSTEA_DASHBOARD_HOST=vps`, the dashboard is now served locally just like self-hosted mode.
